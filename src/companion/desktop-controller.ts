@@ -1,4 +1,4 @@
-import { BrowserWindow, Menu, desktopCapturer, screen, systemPreferences, shell } from 'electron';
+import { BrowserWindow, Menu, desktopCapturer, powerMonitor, screen, systemPreferences, shell } from 'electron';
 import { CompanionEngine, CompanionSettings, Rect, Surface } from './engine';
 import { analyzeScreen, protectAround, textSurfaces } from './surface-analysis';
 
@@ -9,6 +9,7 @@ export interface DesktopCompanionOptions {
   onOpenConfig: () => void;
   onQuit: () => void;
   onHide: () => void;
+  onIdleRoamChanged?: (on: boolean) => void;
 }
 
 interface Metrics {
@@ -44,6 +45,19 @@ export class DesktopCompanion {
   private lookOverride: { x: number; y: number; until: number } | null = null;
   private lastOut: ReturnType<CompanionEngine['update']> | null = null;
   private captureIntervalMs: number;
+  /** Behaviour tab */
+  private clickThrough = true;
+  private autoHide = false;
+  private autoHidden = false;
+  private lastMove = Date.now();
+  private lastCursor = { x: 0, y: 0 };
+  /** Roam around the screen while the user is away (keyboard + mouse idle), then go back. */
+  private idleRoam = false;
+  private idleRoamDelay = 60; // seconds
+  private idleRoaming = false;
+  private savedMode: { mode: CompanionSettings['mode']; enabled: boolean } | null = null;
+  private lastIdleCheck = 0;
+  private systemIdle = 0;
 
   constructor(private win: BrowserWindow, private opts: DesktopCompanionOptions) {
     this.engine = new CompanionEngine(opts.settings);
@@ -68,7 +82,50 @@ export class DesktopCompanion {
     this.loopTimer = this.scanTimer = null;
   }
 
+  /** false = the whole avatar window catches the mouse (no click-through). */
+  setClickThrough(on: boolean) {
+    this.clickThrough = on;
+    this.ignoring = !this.ignoring; // force re-evaluation on next tick
+  }
+
+  /** Hide after a minute without mouse activity; come back when the mouse moves. */
+  setAutoHide(on: boolean) {
+    this.autoHide = on;
+    if (!on && this.autoHidden) {
+      this.autoHidden = false;
+      this.win.showInactive();
+    }
+  }
+
+  setIdleRoam(on: boolean, delaySeconds?: number) {
+    this.idleRoam = on;
+    if (Number.isFinite(delaySeconds)) this.idleRoamDelay = Math.max(5, Math.min(3600, Number(delaySeconds)));
+    if (!on) this.stopIdleRoam();
+  }
+
+  private startIdleRoam() {
+    if (this.idleRoaming) return;
+    this.idleRoaming = true;
+    this.savedMode = { mode: this.engine.settings.mode, enabled: this.engine.settings.enabled };
+    this.engine.setSettings({ mode: 'roam', enabled: true }); // not persisted: temporary
+  }
+
+  private stopIdleRoam() {
+    if (!this.idleRoaming) return;
+    this.idleRoaming = false;
+    if (this.savedMode) this.engine.setSettings(this.savedMode);
+    this.savedMode = null;
+  }
+
+  setSpeedFactor(k: number) {
+    const f = Math.max(0.2, Math.min(3, k || 1));
+    this.engine.setSettings({ walkSpeed: 130 * f, runSpeed: 300 * f, climbSpeed: 160 * f });
+  }
+
   setMetrics(m: Metrics) {
+    // ignore incomplete/invalid measurements (e.g. while the renderer is re-fitting)
+    const ok = m && ['footX', 'footY', 'bodyW', 'bodyH'].every((k) => Number.isFinite((m as any)[k])) && m.bodyH > 20 && m.bodyW > 5;
+    if (!ok) return;
     this.metrics = m;
     this.engine.setMetrics(m.bodyW, m.bodyH);
   }
@@ -96,8 +153,17 @@ export class DesktopCompanion {
     const wa = this.display().workArea;
     switch (c.cmd) {
       case 'settings': {
-        const { captureIntervalMs, height, ...rest } = c;
+        const { captureIntervalMs, height, idleRoam, idleRoamDelay, ...rest } = c;
         delete rest.cmd;
+        if (idleRoam !== undefined || idleRoamDelay !== undefined) {
+          this.setIdleRoam(idleRoam ?? this.idleRoam, idleRoamDelay !== undefined ? Number(idleRoamDelay) : undefined);
+        }
+        if ((rest.mode || rest.enabled !== undefined) && this.idleRoaming) {
+          // explicit change while roaming: becomes the behaviour to return to
+          this.savedMode = { mode: rest.mode ?? this.savedMode?.mode ?? 'follow', enabled: rest.enabled ?? true };
+          delete rest.mode;
+          delete rest.enabled;
+        }
         this.engine.setSettings(rest);
         if (captureIntervalMs) {
           this.captureIntervalMs = Math.max(500, Number(captureIntervalMs));
@@ -188,12 +254,14 @@ export class DesktopCompanion {
 
   private persist() {
     const b = this.win.getBounds();
-    this.opts.onSettingsChanged({ ...this.engine.settings, captureIntervalMs: this.captureIntervalMs, height: b.height });
+    const s = { ...this.engine.settings, ...(this.idleRoaming && this.savedMode ? this.savedMode : {}) };
+    this.opts.onSettingsChanged({ ...s, captureIntervalMs: this.captureIntervalMs, height: b.height });
   }
 
   menu() {
-    const s = this.engine.settings;
+    const s = { ...this.engine.settings, ...(this.idleRoaming && this.savedMode ? this.savedMode : {}) };
     const setMode = (mode: CompanionSettings['mode']) => {
+      this.stopIdleRoam();
       this.engine.setSettings({ mode, enabled: true });
       this.persist();
     };
@@ -223,6 +291,15 @@ export class DesktopCompanion {
           },
         })),
       },
+      {
+        label: 'Passear quando estou inativo',
+        type: 'checkbox',
+        checked: this.idleRoam,
+        click: (i) => {
+          this.setIdleRoam(i.checked);
+          this.opts.onIdleRoamChanged?.(i.checked);
+        },
+      },
       { label: 'Saltar', click: () => this.engine.jump('up') },
       { label: 'Vir ao cursor', click: () => this.command({ cmd: 'walk_to', target: 'cursor' }) },
       { type: 'separator' },
@@ -238,7 +315,9 @@ export class DesktopCompanion {
       { label: 'Esconder', click: () => this.opts.onHide() },
       { label: 'Sair', click: () => this.opts.onQuit() },
     ]);
-    m.popup({ window: this.win });
+    // stay still while the menu is open, otherwise choosing an option becomes a chase
+    this.engine.setPaused(true);
+    m.popup({ window: this.win, callback: () => this.engine.setPaused(false) });
   }
 
   // ------------------------------------------------------------------ screen scan
@@ -313,6 +392,29 @@ export class DesktopCompanion {
     this.lastTick = now;
 
     const cursor = screen.getCursorScreenPoint();
+    if (cursor.x !== this.lastCursor.x || cursor.y !== this.lastCursor.y) {
+      this.lastMove = now;
+      this.lastCursor = { ...cursor };
+      if (this.autoHidden) {
+        this.autoHidden = false;
+        this.win.showInactive();
+      }
+    } else if (
+      this.autoHide &&
+      !this.autoHidden &&
+      now - this.lastMove > (this.idleRoam ? Math.max(60, this.idleRoamDelay + 300) : 60) * 1000 &&
+      !this.engine.isGrabbed()
+    ) {
+      this.autoHidden = true;
+      this.win.hide();
+    }
+    if (this.autoHidden) return;
+    if (now - this.lastIdleCheck > 500) {
+      this.lastIdleCheck = now;
+      this.systemIdle = powerMonitor.getSystemIdleTime(); // seconds without keyboard/mouse input
+      if (this.idleRoam && this.systemIdle >= this.idleRoamDelay && !this.engine.isGrabbed()) this.startIdleRoam();
+      else if (this.idleRoaming && this.systemIdle < 2) this.stopIdleRoam(); // user is back → configured behaviour
+    }
     const cd = screen.getDisplayNearestPoint(cursor);
     if (cd.id !== this.displayId) {
       if (!this.switchSince) this.switchSince = now;
@@ -363,26 +465,17 @@ export class DesktopCompanion {
 
     const wx = Math.round(out.x - this.metrics.footX);
     const wy = Math.round(out.y - this.metrics.footY);
-    const ix = wx | 0;
-    const iy = wy | 0;
-    if (
-      Number.isFinite(wx) &&
-      Number.isFinite(wy) &&
-      (ix !== this.lastWinPos.x || iy !== this.lastWinPos.y)
-    ) {
-      try {
-        this.win.setPosition(ix, iy);
-        this.lastWinPos = { x: ix, y: iy };
-      } catch (err) {
-        console.error('setPosition failed:', { ix, iy, wx, wy }, err);
-      }
+    if (!Number.isFinite(wx) || !Number.isFinite(wy)) return; // never pass NaN to Electron
+    if (wx !== this.lastWinPos.x || wy !== this.lastWinPos.y) {
+      this.win.setPosition(wx, wy, false);
+      this.lastWinPos = { x: wx, y: wy };
     }
 
     // click-through everywhere except over her body
     const b = out.body;
     const hover =
       cursor.x > b.x + b.w * 0.1 && cursor.x < b.x + b.w * 0.9 && cursor.y > b.y && cursor.y < b.y + b.h;
-    const ignore = !(hover || this.engine.isGrabbed());
+    const ignore = this.clickThrough ? !(hover || this.engine.isGrabbed()) : false;
     if (ignore !== this.ignoring) {
       this.win.setIgnoreMouseEvents(ignore, { forward: true });
       this.ignoring = ignore;
@@ -397,6 +490,7 @@ export class DesktopCompanion {
         cursor,
         surfaces: surfaces.length,
         screenCapture: this.captureState,
+        idleRoaming: this.idleRoaming,
         screen: { x: wa.x, y: wa.y, w: wa.width, h: wa.height, displayId: d.id },
       });
     }

@@ -104,7 +104,8 @@ function makeHost(mode: Mode): Host {
 
 interface AvatarState {
   position: { x: number; y: number };
-  pose: PoseName;
+  /** configured default pose ('auto' = rotate randomly) */
+  pose: PoseName | 'auto';
   emotion: EmotionName;
   appearance: AppearanceConfig;
 }
@@ -115,6 +116,7 @@ class AvatarRenderer {
   private renderer!: THREE.WebGLRenderer;
   private avatar!: RiggedAvatar;
   private clock = new THREE.Clock();
+  private animTime = 0;
   private state: AvatarState;
   private ws: WebSocket | null = null;
   private reconnectTimer: number | null = null;
@@ -139,8 +141,10 @@ class AvatarRenderer {
   private lastHover = false;
   private waveCooldown = 0;
   private idleTime = 0;
-  private idleActionUntil = 0;
   private pageInfo: any = null;
+  private behavior = { animSpeed: 1, floatingAnim: true, idleRotation: true };
+  private voice = { engine: 'system', rate: 1, volume: 100, enabled: true, inputEnabled: false };
+  private recognition: any = null;
 
   constructor() {
     const params = new URLSearchParams(window.location.search);
@@ -149,9 +153,25 @@ class AvatarRenderer {
     document.body.classList.add(`mode-${this.mode}`);
     this.host = makeHost(this.mode);
 
-    const hostName =
-      window.location.protocol.startsWith('http') && window.location.hostname ? window.location.hostname : 'localhost';
-    this.wsUrl = params.get('ws') || (window as any).AVATAR_WS_URL || `ws://${hostName}:8080`;
+    // Served over http(s) (viewer at http://<VM>:3000, or behind a reverse proxy such as Home Assistant's):
+    // talk to the same origin at /ws → works with HTTPS (wss) and needs only one port.
+    const served = window.location.protocol.startsWith('http') && !!window.location.host;
+    const sameOrigin = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
+    let ws = params.get('ws') || (window as any).AVATAR_WS_URL || (served ? sameOrigin : 'ws://localhost:8080');
+    const token = params.get('token');
+    if (token && ws !== 'none') ws += (ws.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
+    this.wsUrl = ws;
+
+    // Embedding in dashboards (Home Assistant webpage/iframe card): ?embed=1 hides the HUD;
+    // ?bg=<css colour> sets a background (default transparent); ?voice=1/0 turns speech audio on/off
+    // (off by default when embedded, so only one device talks).
+    const embed = params.get('embed') === '1' || params.get('embed') === 'true';
+    if (embed) document.body.classList.add('embed');
+    const bg = params.get('bg');
+    if (bg) document.documentElement.style.setProperty('background', bg, 'important');
+    const voiceParam = params.get('voice');
+    if (voiceParam !== null) this.voice.enabled = !['0', 'false', 'off'].includes(voiceParam);
+    else if (embed) this.voice.enabled = false;
 
     this.state = {
       position: { x: 100, y: 100 },
@@ -258,6 +278,7 @@ class AvatarRenderer {
       const foot = proj(box.min.y + 0.02);
       const top = proj(box.max.y);
       const bodyH = foot.y - top.y;
+      if (!Number.isFinite(bodyH) || bodyH < 20) return; // window not laid out yet / invalid box
       this.pxPerMeter = bodyH / Math.max(avatarHeight - 0.02, 0.1);
       this.host.metrics({
         footX: foot.x,
@@ -277,6 +298,7 @@ class AvatarRenderer {
       this.ws = new WebSocket(this.wsUrl);
       this.ws.onopen = () => {
         this.updateStatusBadge('Hermes Connected', true);
+        (window as any).api?.wsState?.({ connected: true, url: this.wsUrl.replace(/token=[^&]+/, 'token=…') });
         this.sendReport();
       };
       this.ws.onmessage = (event) => {
@@ -286,8 +308,13 @@ class AvatarRenderer {
           console.warn('Invalid WS message:', err);
         }
       };
-      this.ws.onclose = () => {
-        this.updateStatusBadge('Standby', false);
+      this.ws.onclose = (ev: CloseEvent) => {
+        this.updateStatusBadge(ev.code === 4401 ? 'Token inválido' : 'Standby', false);
+        (window as any).api?.wsState?.({
+          connected: false,
+          url: this.wsUrl.replace(/token=[^&]+/, 'token=…'),
+          error: ev.code === 4401 ? 'token inválido' : 'sem ligação',
+        });
         this.scheduleReconnect();
       };
       this.ws.onerror = () => this.ws?.close();
@@ -320,7 +347,8 @@ class AvatarRenderer {
         clientId: this.clientId,
         client: this.mode,
         data: {
-          pose: this.state.pose,
+          pose: this.avatar.getPose(),
+          defaultPose: this.state.pose,
           emotion: this.state.emotion,
           companion: c
             ? {
@@ -359,10 +387,7 @@ class AvatarRenderer {
         break;
 
       case 'pose':
-        if (data.pose) {
-          this.state.pose = data.pose;
-          this.avatar.setPose(data.pose as PoseName);
-        }
+        if (data.pose) this.applyPoseRequest(data.pose, data, !!message.id);
         break;
 
       case 'emotion':
@@ -380,16 +405,13 @@ class AvatarRenderer {
           this.noteMcpEmotion(data.emotion);
           this.avatar.setEmotion(data.emotion as EmotionName, data.intensity ?? 1);
         }
-        if (data.pose) {
-          this.state.pose = data.pose;
-          this.avatar.setPose(data.pose as PoseName);
-        }
+        if (data.pose) this.applyPoseRequest(data.pose, data, true);
         if (data.gazeTarget) this.avatar.setFacialState({ lookAt: data.gazeTarget });
         if (data.speechText) this.showSpeech(data.speechText, data.durationMs);
         break;
 
       case 'speak_start':
-        this.showSpeech(data.text || '', data.durationMs);
+        this.showSpeech(data.text || '', data.durationMs, data.forceVoice === true);
         break;
 
       case 'speak_end':
@@ -426,6 +448,24 @@ class AvatarRenderer {
       case 'customize':
         this.state.appearance = { ...this.state.appearance, ...data };
         this.avatar.updateAppearance(this.state.appearance);
+        if (data.pose) this.applyPoseRequest(data.pose, { default: true }, false);
+        if (this.avatar.bodyChanged) this.refit();
+        break;
+
+      case 'behavior':
+        this.applyBehavior(data);
+        break;
+
+      case 'voice':
+        this.voice = { ...this.voice, ...data };
+        break;
+
+      case 'listen':
+        this.listen(Number(data.duration ?? 6));
+        break;
+
+      case 'stop_speaking':
+        this.hideSpeech();
         break;
 
       case 'point':
@@ -441,6 +481,25 @@ class AvatarRenderer {
         this.sendReport();
         break;
     }
+  }
+
+  /**
+   * Pose requests.
+   *  - from the configuration window (no message id, or `default: true`): becomes the default pose
+   *    ('auto' rotates poses randomly);
+   *  - from Hermes (MCP): shown temporarily (`holdSeconds`, default 12 s, longer while talking),
+   *    then the configured default behaviour resumes. `holdSeconds: 0` / `default: true` keeps it.
+   */
+  private applyPoseRequest(pose: string, data: any, fromMcp: boolean) {
+    const asDefault = !fromMcp || data?.default === true || pose === 'auto' || data?.holdSeconds === 0;
+    if (asDefault) {
+      this.state.pose = pose as PoseName | 'auto';
+      this.avatar.setPose(pose as PoseName | 'auto');
+      return;
+    }
+    const talk = data?.speechText ? Math.min(12, String(data.speechText).length * 0.07) : 0;
+    const hold = Number.isFinite(Number(data?.holdSeconds)) ? Number(data.holdSeconds) : Math.max(12, talk + 3);
+    this.avatar.holdPose(pose as PoseName, hold);
   }
 
   private noteMcpEmotion(e: EmotionName) {
@@ -467,11 +526,8 @@ class AvatarRenderer {
       if (m.type === 'mcp') this.handleMCPMessage(m.data);
       if (m.type === 'say') this.showSpeech(m.data?.text || '', m.data?.durationMs);
       if (m.type === 'emotion') this.setTempEmotion(m.data?.emotion, m.data?.seconds ?? 2.5);
-      if (m.type === 'pose') this.avatar.setPose(m.data?.pose);
-      if (m.type === 'point') {
-        this.avatar.pointAtNormalized(Number(m.data?.nx ?? 0), Number(m.data?.ny ?? 0));
-        this.idleActionUntil = this.clock.elapsedTime + 3.5;
-      }
+      if (m.type === 'pose') this.avatar.holdPose(m.data?.pose, m.data?.seconds ?? 4);
+      if (m.type === 'point') this.avatar.pointAtNormalized(Number(m.data?.nx ?? 0), Number(m.data?.ny ?? 0));
     });
   }
 
@@ -486,6 +542,7 @@ class AvatarRenderer {
     const prev = this.lastCompanion;
     this.lastCompanion = s;
     const bodyH = s.bodyH || this.pxPerMeter * 1.75;
+    this.avatar.roamingIdle = !!s.idleRoaming;
     this.avatar.setLocomotion(s.state, s.facing, s.speedBH, s.vy / bodyH, s.lookX);
     this.avatar.setFacialState({ lookAt: { x: s.lookX, y: s.lookY } });
 
@@ -493,8 +550,9 @@ class AvatarRenderer {
     const now = performance.now() / 1000;
     const dt = Math.max(1 / 120, now - this.prevVel.t);
     if (this.prevVel.t > 0 && dt < 0.3) {
-      const ax = (s.vx - this.prevVel.x) / dt / this.pxPerMeter;
-      const ay = -(s.vy - this.prevVel.y) / dt / this.pxPerMeter;
+      const ppm = Math.max(this.pxPerMeter, 20);
+      const ax = Number.isFinite(s.vx - this.prevVel.x) ? (s.vx - this.prevVel.x) / dt / ppm : 0;
+      const ay = Number.isFinite(s.vy - this.prevVel.y) ? -(s.vy - this.prevVel.y) / dt / ppm : 0;
       this.acc.x += (ax - this.acc.x) * 0.35;
       this.acc.y += (ay - this.acc.y) * 0.35;
       this.avatar.setExternalAcceleration(this.acc.x, this.acc.y);
@@ -509,8 +567,7 @@ class AvatarRenderer {
     }
     if (s.hover && !this.lastHover && s.state === 'idle' && this.waveCooldown <= 0) {
       this.setTempEmotion('happy', 2.5);
-      this.avatar.setPose('waving');
-      this.idleActionUntil = this.clock.elapsedTime + 1.8;
+      this.avatar.holdPose('waving', 1.8);
       this.waveCooldown = 25;
     }
     this.lastHover = s.hover;
@@ -525,32 +582,160 @@ class AvatarRenderer {
     }
     const s = this.lastCompanion;
     const speaking = this.speechTimer !== null;
-    if (this.idleActionUntil > 0 && t > this.idleActionUntil) {
-      this.idleActionUntil = 0;
-      this.avatar.setPose(this.state.pose === 'idle' ? 'idle' : this.state.pose);
+
+    // idle pose variations are handled by the avatar itself (Behaviour → idle rotation)
+    void s;
+    void speaking;
+  }
+
+  /** Proportions changed: recompute the bounding box, camera and (companion) metrics. */
+  private refit() {
+    this.avatar.bodyChanged = false;
+    const r = this.avatar.root.rotation.y;
+    this.avatar.root.rotation.y = 0.12;
+    this.avatar.root.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(this.avatar.root);
+    const ok = [box.min.x, box.min.y, box.max.x, box.max.y].every(Number.isFinite) && box.max.y - box.min.y > 0.5;
+    if (ok) this.avatarBox = box; // never replace a good box with an invalid one
+    this.avatar.root.rotation.y = r;
+    const c = document.getElementById('canvas-container');
+    this.fitCameraToAvatar(c?.clientWidth || window.innerWidth, c?.clientHeight || window.innerHeight);
+  }
+
+  private applyBehavior(b: any) {
+    if (!b) return;
+    if (b.animSpeed !== undefined) this.behavior.animSpeed = Math.max(0.1, Math.min(3, Number(b.animSpeed) || 1));
+    if (b.floatingAnim !== undefined) this.behavior.floatingAnim = !!b.floatingAnim;
+    if (b.idleRotation !== undefined) {
+      // "Enable idle rotation": while idle she alternates poses and returns to the default pose
+      this.behavior.idleRotation = !!b.idleRotation;
+      this.avatar.behavior.idleCycle = this.behavior.idleRotation;
     }
-    if (s && s.state === 'idle' && !speaking && this.state.pose === 'idle') {
-      this.idleTime += dt;
-      if (this.idleTime > 22 + Math.random() * 20 && this.idleActionUntil === 0) {
-        this.idleTime = 0;
-        const acts: [PoseName, number][] = [
-          ['celebrating', 1.3],
-          ['thinking', 3],
-          ['listening', 3],
-          ['nodding', 1.6],
-        ];
-        const [p, d] = acts[Math.floor(Math.random() * acts.length)];
-        this.avatar.setPose(p);
-        this.idleActionUntil = t + d;
+  }
+
+  // ================================================================== voice
+  private pickVoice(text: string): SpeechSynthesisVoice | null {
+    const voices = window.speechSynthesis?.getVoices?.() || [];
+    if (!voices.length) return null;
+    const eng = (this.voice.engine || 'system').toLowerCase();
+    if (eng !== 'system') {
+      const v =
+        voices.find((x) => x.name.toLowerCase() === eng || x.voiceURI.toLowerCase() === eng) ||
+        voices.find((x) => x.name.toLowerCase().startsWith(eng)) ||
+        voices.find((x) => x.name.toLowerCase().includes(eng));
+      if (v) return v;
+    }
+    // system: match the text language (Portuguese texts get a Portuguese voice)
+    const pt = /[ãõçáéíóúâêô]|\b(o|a|os|as|de|que|não|está|olá|já)\b/i.test(text);
+    const lang = pt ? 'pt' : (navigator.language || 'en').slice(0, 2);
+    return (
+      voices.find((x) => x.lang.toLowerCase() === (pt ? 'pt-pt' : navigator.language.toLowerCase())) ||
+      voices.find((x) => x.lang.toLowerCase().startsWith(lang)) ||
+      voices.find((x) => x.default) ||
+      null
+    );
+  }
+
+  /** Speaks aloud with the system voices; returns the expected duration (ms) or null. */
+  private speakAloud(text: string, force = false): number | null {
+    const synth = window.speechSynthesis;
+    if (!text || !synth || (!this.voice.enabled && !force)) return null;
+    if (!synth.getVoices().length) {
+      // the voice list loads asynchronously: speak as soon as it is available
+      const go = () => this.speakNow(text);
+      synth.addEventListener('voiceschanged', go, { once: true });
+      window.setTimeout(() => {
+        synth.removeEventListener('voiceschanged', go);
+        if (!synth.speaking) go();
+      }, 800);
+      return Math.max(1200, (text.length * 70) / (Number(this.voice.rate) || 1)) + 1400;
+    }
+    return this.speakNow(text);
+  }
+
+  private speakNow(text: string): number {
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    const v = this.pickVoice(text);
+    if (v) {
+      u.voice = v;
+      u.lang = v.lang;
+    }
+    u.rate = Math.max(0.5, Math.min(2, Number(this.voice.rate) || 1));
+    u.volume = Math.max(0, Math.min(1, (Number(this.voice.volume) || 0) / 100));
+    const est = Math.max(1200, (text.length * 70) / u.rate);
+    // keep the mouth moving exactly while the voice is audible
+    u.onstart = () => this.avatar.speakText(text, est);
+    u.onboundary = () => this.avatar.setMouthLevel(0.8);
+    u.onend = () => {
+      this.avatar.setSpeaking(false);
+      if (this.speechTimer !== null) {
+        window.clearTimeout(this.speechTimer);
+        this.speechTimer = window.setTimeout(() => this.hideSpeech(), 900);
       }
-    } else this.idleTime = 0;
+    };
+    synth.speak(u);
+    return est + 600;
+  }
+
+  /** Voice input (Web Speech recognition where available) → sent to the MCP server for `voice_input`. */
+  private listen(seconds: number) {
+    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    const send = (payload: any) => {
+      const msg = { type: 'voice_input', clientId: this.clientId, client: this.mode, ...payload };
+      if (this.host.kind === 'web' && this.host.report) this.host.report(msg);
+      else if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(msg));
+    };
+    if (!this.voice.inputEnabled) {
+      send({ error: 'voice input disabled in settings' });
+      return;
+    }
+    if (!SR) {
+      this.showSpeech('Ainda não consigo ouvir neste ambiente (reconhecimento de voz indisponível).', 4000);
+      send({ error: 'speech recognition unavailable in this environment' });
+      return;
+    }
+    try {
+      this.recognition?.abort?.();
+      const rec = new SR();
+      this.recognition = rec;
+      rec.lang = navigator.language || 'pt-PT';
+      rec.interimResults = true;
+      rec.continuous = false;
+      let finalText = '';
+      this.avatar.holdPose('listening', seconds + 1);
+      this.avatar.setEmotion('curious');
+      this.showSpeech('🎙️ A ouvir…', seconds * 1000, false);
+      rec.onresult = (e: any) => {
+        let t = '';
+        for (let i = 0; i < e.results.length; i++) t += e.results[i][0].transcript;
+        if (e.results[e.results.length - 1].isFinal) finalText = t;
+        const span = document.getElementById('speech-text');
+        if (span) span.textContent = '🎙️ ' + t;
+      };
+      rec.onerror = (e: any) => send({ error: String(e?.error || 'recognition error') });
+      rec.onend = () => {
+        this.avatar.holdPose('listening', 0.01);
+        this.avatar.setEmotion(this.baseEmotion);
+        if (finalText) send({ text: finalText });
+        this.hideSpeech();
+      };
+      rec.start();
+      window.setTimeout(() => rec.stop?.(), Math.max(1, seconds) * 1000);
+    } catch (err) {
+      send({ error: String(err) });
+    }
   }
 
   // ================================================================== speech
-  private showSpeech(text: string, durationMs?: number) {
-    const autoDuration = durationMs ?? Math.max(1800, Math.min(12000, text.length * 65));
-    if (text) this.avatar.speakText(text, Math.min(autoDuration, text.length * 75));
-    else this.avatar.setSpeaking(true, 0.75);
+  private showSpeech(text: string, durationMs?: number, forceVoice = false) {
+    const spoken = this.speakAloud(text, forceVoice);
+    const autoDuration = Math.max(durationMs ?? Math.max(1800, Math.min(12000, text.length * 65)), spoken ?? 0);
+    if (spoken === null) {
+      if (text) this.avatar.speakText(text, Math.min(autoDuration, text.length * 75));
+      else this.avatar.setSpeaking(true, 0.75);
+    }
 
     const bubble = document.getElementById('speech-bubble');
     const span = document.getElementById('speech-text');
@@ -576,6 +761,7 @@ class AvatarRenderer {
 
   private hideSpeech() {
     this.avatar.setSpeaking(false);
+    window.speechSynthesis?.cancel?.();
     document.getElementById('speech-bubble')?.classList.remove('visible');
     if (this.typeTimer !== null) {
       window.clearInterval(this.typeTimer);
@@ -646,9 +832,8 @@ class AvatarRenderer {
         this.host.menu();
       });
       dom.addEventListener('dblclick', () => {
-        this.avatar.setPose('waving');
+        this.avatar.holdPose('waving', 2);
         this.setTempEmotion('happy', 2);
-        this.idleActionUntil = this.clock.elapsedTime + 2;
       });
     } else {
       dom.addEventListener('mousedown', (e) => {
@@ -716,10 +901,14 @@ class AvatarRenderer {
 
   private animate() {
     requestAnimationFrame(() => this.animate());
-    const dt = Math.min(this.clock.getDelta(), 0.05);
-    const elapsed = this.clock.elapsedTime;
+    const raw = Math.min(this.clock.getDelta(), 0.05);
+    const dt = raw * this.behavior.animSpeed;
+    this.animTime += dt;
+    const elapsed = this.animTime;
     if (this.isCompanion) this.companionTick(dt);
-    else this.avatar.root.position.y = Math.sin(elapsed * 1.4) * 0.012;
+
+    const idle = !this.lastCompanion || this.lastCompanion.state === 'idle';
+    this.avatar.root.position.y = this.behavior.floatingAnim && idle ? (Math.sin(elapsed * 1.4) * 0.5 + 0.5) * 0.015 : 0;
     this.avatar.update(dt, elapsed);
     this.positionBubble();
     this.renderer.render(this.scene, this.camera);

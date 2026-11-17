@@ -138,6 +138,12 @@ export class StrandSystem {
       this.substep(h, time, M, colliders, gravity, wind, ext);
     }
 
+    // numerical safety: if anything blew up, restart from the rest shape
+    const s0 = this.strands[0];
+    if (s0 && s0.world.some((p) => !Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z))) {
+      this.initialized = false;
+      return;
+    }
     this.inv.copy(M).invert();
     this.strands.forEach((st) => {
       if (this.local.length < st.n) {
@@ -160,9 +166,10 @@ export class StrandSystem {
     ext?: THREE.Vector3
   ) {
     const g = 9.8 * gravity * h * h;
-    const ex = ext ? ext.x * h * h : 0;
-    const ey = ext ? ext.y * h * h : 0;
-    const ez = ext ? ext.z * h * h : 0;
+    const okExt = ext && Number.isFinite(ext.x) && Number.isFinite(ext.y) && Number.isFinite(ext.z);
+    const ex = okExt ? ext!.x * h * h : 0;
+    const ey = okExt ? ext!.y * h * h : 0;
+    const ez = okExt ? ext!.z * h * h : 0;
     this.strands.forEach((st, si) => {
       const ph = st.def.phase ?? si * 0.73;
       const wx = (Math.sin(time * 0.9 + ph) * 0.6 + Math.sin(time * 2.3 + ph * 1.7) * 0.25) * wind * h * h * 3;

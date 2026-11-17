@@ -303,6 +303,13 @@
             font-weight: 600;
         }
 
+        .hint {
+            display: block;
+            font-size: 12.5px;
+            color: #666;
+            margin-top: 4px;
+        }
+
         .status-indicator.online {
             background: #d4edda;
             color: #155724;
@@ -375,6 +382,61 @@
             from { transform: translateX(100%); opacity: 0; }
             to { transform: translateX(0); opacity: 1; }
         }
+
+        .dashboard-body {
+            display: grid;
+            grid-template-columns: 1fr 310px;
+            align-items: start;
+        }
+
+        .preview-panel {
+            position: sticky;
+            top: 0;
+            padding: 24px 20px;
+            background: #f8f9fb;
+            border-left: 1px solid #e6e8ef;
+            min-height: 480px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .preview-panel h3 {
+            color: #4169E1;
+            font-size: 1.05em;
+            margin-bottom: 12px;
+        }
+
+        #avatar-preview-canvas {
+            width: 270px;
+            height: 360px;
+            border-radius: 14px;
+            background: radial-gradient(circle at 50% 35%, #2a2438 0%, #101016 100%);
+            box-shadow: inset 0 0 24px rgba(0,0,0,0.45);
+            cursor: grab;
+            overflow: hidden;
+        }
+
+        #avatar-preview-canvas:active {
+            cursor: grabbing;
+        }
+
+        .preview-hint {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #6c757d;
+        }
+
+        @media (max-width: 900px) {
+            .dashboard-body {
+                grid-template-columns: 1fr;
+            }
+            .preview-panel {
+                position: static;
+                border-left: none;
+                border-top: 1px solid #e6e8ef;
+            }
+        }
     </style>
 </head>
 <body>
@@ -394,6 +456,7 @@
             <button class="tab" onclick="switchTab('advanced')">Advanced</button>
         </div>
 
+        <div class="dashboard-body">
         <div class="content">
             <!-- Appearance Tab -->
             <div id="appearance" class="tab-content active">
@@ -403,24 +466,24 @@
                     <div class="form-group">
                         <label>Hair Color</label>
                         <div class="color-input">
-                            <input type="color" id="hairColor" value="#8B4513">
-                            <input type="text" id="hairColorText" value="#8B4513" placeholder="#8B4513">
+                            <input type="color" id="hairColor" value="#C9A15A">
+                            <input type="text" id="hairColorText" value="#C9A15A" placeholder="#8B4513">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Eye Color</label>
                         <div class="color-input">
-                            <input type="color" id="eyeColor" value="#4169E1">
-                            <input type="text" id="eyeColorText" value="#4169E1" placeholder="#4169E1">
+                            <input type="color" id="eyeColor" value="#7A4A1C">
+                            <input type="text" id="eyeColorText" value="#7A4A1C" placeholder="#4169E1">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Skin Tone</label>
                         <div class="color-input">
-                            <input type="color" id="skinTone" value="#FDBCB4">
-                            <input type="text" id="skinToneText" value="#FDBCB4" placeholder="#FDBCB4">
+                            <input type="color" id="skinTone" value="#F7DCC0">
+                            <input type="text" id="skinToneText" value="#F7DCC0" placeholder="#FDBCB4">
                         </div>
                     </div>
                 </div>
@@ -428,6 +491,10 @@
                 <div class="section">
                     <h2>Default Pose</h2>
                     <div class="pose-grid">
+                        <div class="pose-card" data-pose="auto" title="Vai alternando as poses aleatoriamente (o Hermes também pode pedir poses temporárias)">
+                            <div class="pose-icon">🔀</div>
+                            <div>Auto</div>
+                        </div>
                         <div class="pose-card selected" data-pose="idle">
                             <div class="pose-icon">🧍</div>
                             <div>Idle</div>
@@ -449,7 +516,7 @@
                             <div>Happy</div>
                         </div>
                         <div class="pose-card" data-pose="dancing">
-                            <div class="pose-icon">🕺</div>
+                            <div class="pose-icon">💃</div>
                             <div>Dancing</div>
                         </div>
                     </div>
@@ -562,11 +629,11 @@
                 <div class="section">
                     <h2>Hair Style</h2>
                     <div class="hair-style-grid">
-                        <div class="hair-style-card selected" data-hair-style="short">
+                        <div class="hair-style-card" data-hair-style="short">
                             <div class="hair-preview">💇‍♂️</div>
                             <div>Short</div>
                         </div>
-                        <div class="hair-style-card" data-hair-style="long">
+                        <div class="hair-style-card selected" data-hair-style="long">
                             <div class="hair-preview">💇‍♀️</div>
                             <div>Long</div>
                         </div>
@@ -644,24 +711,24 @@
                     <div class="form-group">
                         <label>Main Clothing Color</label>
                         <div class="color-input">
-                            <input type="color" id="clothingColor" value="#4169E1">
-                            <input type="text" id="clothingColorText" value="#4169E1" placeholder="#4169E1">
+                            <input type="color" id="clothingColor" value="#0D0D12">
+                            <input type="text" id="clothingColorText" value="#0D0D12" placeholder="#4169E1">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Shoe Color</label>
                         <div class="color-input">
-                            <input type="color" id="shoeColor" value="#333333">
-                            <input type="text" id="shoeColorText" value="#333333" placeholder="#333333">
+                            <input type="color" id="shoeColor" value="#0D0D12">
+                            <input type="text" id="shoeColorText" value="#0D0D12" placeholder="#333333">
                         </div>
                     </div>
 
                     <div class="form-group">
                         <label>Accessory Color</label>
                         <div class="color-input">
-                            <input type="color" id="accessoryColor" value="#FFD700">
-                            <input type="text" id="accessoryColorText" value="#FFD700" placeholder="#FFD700">
+                            <input type="color" id="accessoryColor" value="#D9B35E">
+                            <input type="text" id="accessoryColorText" value="#D9B35E" placeholder="#FFD700">
                         </div>
                     </div>
                 </div>
@@ -720,8 +787,20 @@
                     <div class="form-group">
                         <label>
                             <input type="checkbox" id="idleRotation" checked>
-                            Enable idle rotation
+                            Enable idle rotation (alterna poses quando está parada e volta à pose por defeito)
                         </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="idleRoam">
+                            Passear pelo ecrã quando estou inativo (alterna poses enquanto passeia; ao voltares, retoma o comportamento configurado)
+                        </label>
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Considerar inativo após: <span class="slider-value" id="idleRoamDelayValue">60</span> s</label>
+                        <input type="range" id="idleRoamDelay" min="15" max="600" step="15" value="60">
                     </div>
                 </div>
             </div>
@@ -778,18 +857,41 @@
             <!-- Advanced Tab -->
             <div id="advanced" class="tab-content">
                 <div class="section">
-                    <h2>Service Status</h2>
-                    <div class="status-indicator online" id="serviceStatus">
+                    <h2>Ligação ao Hermes</h2>
+                    <div class="status-indicator offline" id="hermesStatus">
                         <span class="status-dot"></span>
-                        <span>Service Running</span>
+                        <span>A verificar…</span>
                     </div>
+
+                    <div class="form-group" style="margin-top:16px">
+                        <label>Endereço do servidor do avatar no Hermes (VM)</label>
+                        <div style="display:flex;gap:10px">
+                            <input type="text" id="hermesUrl" placeholder="ex.: 192.168.1.50  ou  ws://192.168.1.50:8080" style="flex:1">
+                            <button class="btn btn-secondary" type="button" onclick="testHermesConnection()">Testar ligação</button>
+                        </div>
+                        <small class="hint">IP ou nome da VM do Hermes (porta 8080 por defeito). Também aceita <code>wss://host/ws</code> atrás de um proxy HTTPS. Vazio = usar só o servidor local.</small>
+                        <div class="hint" id="hermesTestResult" style="margin-top:6px"></div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="startLocalServer">
+                            Iniciar também um servidor local neste computador (só necessário sem o Hermes, ou para outros clientes MCP locais)
+                        </label>
+                    </div>
+
+                    <div class="status-indicator offline" id="serviceStatus">
+                        <span class="status-dot"></span>
+                        <span>Servidor local</span>
+                    </div>
+                    <div class="hint" id="serviceError" style="margin-top:6px;color:#721c24"></div>
                 </div>
 
                 <div class="section">
                     <h2>MCP Configuration</h2>
                     
                     <div class="form-group">
-                        <label>Server Port</label>
+                        <label>Porta do servidor local</label>
                         <input type="number" id="serverPort" value="8080">
                     </div>
 
@@ -823,8 +925,15 @@
                 <button class="btn btn-secondary" onclick="applySettings()">Apply Changes</button>
             </div>
         </div>
+        <aside class="preview-panel">
+            <h3>Live 3D Preview</h3>
+            <div id="avatar-preview-canvas"></div>
+            <p class="preview-hint">Arrasta para rodar · roda do rato para zoom · duplo clique para a cabeça</p>
+        </aside>
+        </div>
     </div>
 
+    <script type="module" src="./preview.ts"></script>
     <script type="module" src="./working.js"></script>
 </body>
 </html>

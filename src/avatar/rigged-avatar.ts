@@ -20,7 +20,8 @@ export type PoseName =
   | 'shaking_head'
   | 'greeting'
   | 'celebrating'
-  | 'focused';
+  | 'focused'
+  | 'dancing';
 
 export type EmotionName =
   | 'neutral'
@@ -83,13 +84,69 @@ export type BodyJointName =
 
 export type JointName = BodyJointName | FingerJointName;
 
+export type OutfitStyle = 'casual' | 'formal' | 'sporty' | 'elegant' | 'cyberpunk' | 'fantasy';
+
 export interface AppearanceConfig {
   hairColor: string;
   eyeColor: string;
   skinTone: string;
   outfit: string;
   headphoneColor?: string;
+  clothingColor?: string;
+  shoeColor?: string;
+  accessoryColor?: string;
+  // Face tab of the configuration window
+  faceShape?: FaceShape | string;
+  faceRoundness?: number | string; // 0..100 (50 = default)
+  eyeStyle?: EyeStyle | string;
+  eyeSize?: number | string; // 20..100 (50 = default)
+  noseSize?: number | string; // 20..100 (50 = default)
+  mouthSize?: number | string; // 20..100 (50 = default)
+  hairStyle?: HairStyle | string;
+  // Body tab
+  bodyType?: BodyType | string;
+  bodyHeight?: number | string; // 100..200 (150 = default)
+  bodyWidth?: number | string; // 50..150 (100 = default)
+  shoulderWidth?: number | string; // 50..150 % (100 = default)
+  waistSize?: number | string; // 50..120 % (80 = default)
 }
+
+export type BodyType = 'average' | 'athletic' | 'slim' | 'curvy';
+
+const BODY_TYPES: Record<BodyType, { width: number; shoulder: number; waist: number; hip: number; bust: number; limb: number; leg: number }> = {
+  average: { width: 1, shoulder: 1, waist: 1, hip: 1, bust: 1, limb: 1, leg: 1 },
+  athletic: { width: 1.03, shoulder: 1.1, waist: 1.06, hip: 0.96, bust: 0.85, limb: 1.1, leg: 1.02 },
+  slim: { width: 0.9, shoulder: 0.95, waist: 0.88, hip: 0.92, bust: 0.8, limb: 0.86, leg: 1.03 },
+  curvy: { width: 1.04, shoulder: 0.98, waist: 0.86, hip: 1.15, bust: 1.3, limb: 1.05, leg: 1 },
+};
+
+export type FaceShape = 'oval' | 'round' | 'square' | 'heart';
+export type EyeStyle = 'normal' | 'large' | 'almond' | 'cat';
+export type HairStyle = 'long' | 'short' | 'curly' | 'ponytail';
+
+interface HeadParams {
+  taper1: number;
+  taper2: number;
+  chinPoint: number;
+  cheek: number;
+  cheekT: number;
+  yLow: number;
+  nose: number;
+}
+
+const FACE_SHAPES: Record<FaceShape, Omit<HeadParams, 'nose'>> = {
+  oval: { taper1: 0.3, taper2: 0.12, chinPoint: 0, cheek: 0.035, cheekT: 0.3, yLow: 1.13 },
+  round: { taper1: 0.17, taper2: 0.06, chinPoint: 0.08, cheek: 0.075, cheekT: 0.38, yLow: 1.05 },
+  square: { taper1: 0.09, taper2: 0.04, chinPoint: 0.26, cheek: 0.02, cheekT: 0.3, yLow: 1.08 },
+  heart: { taper1: 0.36, taper2: 0.2, chinPoint: 0.05, cheek: 0.07, cheekT: 0.12, yLow: 1.17 },
+};
+
+const EYE_STYLES: Record<EyeStyle, { w: number; h: number; tilt: number; wing: number }> = {
+  normal: { w: 1, h: 1, tilt: 0.14, wing: 1 },
+  large: { w: 1.12, h: 1.2, tilt: 0.1, wing: 0.8 },
+  almond: { w: 1.1, h: 0.8, tilt: 0.22, wing: 1.15 },
+  cat: { w: 1.06, h: 0.88, tilt: 0.34, wing: 1.7 },
+};
 
 export interface FacialState {
   emotion: EmotionName;
@@ -221,6 +278,49 @@ function limbGeometry(
   return new THREE.LatheGeometry(pts, radial);
 }
 
+// --- limb skin profiles (garments are generated from these so they always sit outside the skin)
+interface LimbProfile {
+  rTop: number;
+  rBot: number;
+  len: number;
+  bulgeAt: number;
+  bulgeAmt: number;
+}
+const UPPER_ARM: LimbProfile = { rTop: 0.038, rBot: 0.029, len: 0.27, bulgeAt: 0.25, bulgeAmt: 0.004 };
+const FOREARM: LimbProfile = { rTop: 0.03, rBot: 0.021, len: 0.24, bulgeAt: 0.22, bulgeAmt: 0.005 };
+const THIGH: LimbProfile = { rTop: 0.072, rBot: 0.045, len: 0.42, bulgeAt: 0.2, bulgeAmt: 0.006 };
+const SHIN: LimbProfile = { rTop: 0.044, rBot: 0.026, len: 0.4, bulgeAt: 0.28, bulgeAmt: 0.009 };
+
+/** Skin radius of a limb at local height y (0 = joint, -len = next joint). */
+function limbRadiusAt(P: LimbProfile, y: number) {
+  const t = clamp((y + P.len) / P.len, 0, 1); // 0 bottom .. 1 top
+  const fromTop = 1 - t;
+  return P.rBot + (P.rTop - P.rBot) * t + P.bulgeAmt * Math.exp(-((fromTop - P.bulgeAt) ** 2) / 0.035);
+}
+
+function skinLimb(P: LimbProfile) {
+  return limbGeometry(P.rTop, P.rBot, P.len, P.bulgeAt, P.bulgeAmt);
+}
+
+/**
+ * Tube following a limb's skin profile between yTop and yBot (local heights),
+ * offset outward: r = skin * scale + add. Optional rounded ends.
+ */
+function sleeveGeometry(P: LimbProfile, yTop: number, yBot: number, scale: number, add: number, radial = 20) {
+  const pts: THREE.Vector2[] = [];
+  const n = 16;
+  for (let k = 0; k <= n; k++) {
+    const y = yBot + ((yTop - yBot) * k) / n;
+    pts.push(new THREE.Vector2(limbRadiusAt(P, y) * scale + add, y));
+  }
+  return new THREE.LatheGeometry(pts, radial);
+}
+
+/** Radius a garment ring/torus must have at height y to stay on top of the sleeve. */
+function sleeveRadius(P: LimbProfile, y: number, scale: number, add: number) {
+  return limbRadiusAt(P, y) * scale + add;
+}
+
 // --- torso profile, in hip-space (y = 0 at the hips joint) -------------------
 const TORSO: [number, number, number][] = [
   [-0.15, 0.05, 0.045],
@@ -238,8 +338,27 @@ const TORSO: [number, number, number][] = [
   [0.48, 0.075, 0.052],
   [0.5, 0.04, 0.038],
 ];
+/** Body proportions (config "Body" tab). Mutated by RiggedAvatar.applyBody(). */
+export const BODY = { width: 1, shoulder: 1, waist: 1, hip: 1, bust: 1 };
+
+function bodyFactor(y: number) {
+  const top = 1 - smooth(0.46, 0.5, y); // the neck base keeps its size
+  const w = 1 + (BODY.width - 1) * top;
+  const sh = 1 + (BODY.shoulder - 1) * smooth(0.33, 0.43, y) * top;
+  const wa = 1 + (BODY.waist - 1) * Math.exp(-(((y - 0.14) / 0.075) ** 2));
+  const hp = 1 + (BODY.hip - 1) * Math.exp(-(((y + 0.03) / 0.09) ** 2));
+  return w * sh * wa * hp;
+}
+
 const _ab = { a: 0, b: 0 };
 function torsoAB(y: number) {
+  rawTorsoAB(y);
+  const f = bodyFactor(y);
+  _ab.a *= f;
+  _ab.b *= 1 + (f - 1) * 0.65;
+  return _ab;
+}
+function rawTorsoAB(y: number) {
   if (y <= TORSO[0][0]) {
     _ab.a = TORSO[0][1];
     _ab.b = TORSO[0][2];
@@ -264,7 +383,8 @@ const BUST_Y = 0.285;
 function bust(x: number, y: number) {
   let z = 0;
   for (const s of [-1, 1]) {
-    z += 0.042 * Math.exp(-((x - s * 0.056) ** 2) / 0.042 ** 2 - ((y - BUST_Y) ** 2) / 0.048 ** 2);
+    const cx = s * 0.056 * BODY.width;
+    z += 0.042 * BODY.bust * Math.exp(-((x - cx) ** 2) / (0.042 * Math.sqrt(BODY.bust)) ** 2 - ((y - BUST_Y) ** 2) / 0.048 ** 2);
   }
   return z;
 }
@@ -284,7 +404,8 @@ function torsoGeometry(
   seg: number,
   inflate: number,
   add: number,
-  yShift: number
+  yShift: number,
+  endShrink: [number, number] = [0, 0]
 ): THREE.BufferGeometry {
   const pos: number[] = [];
   const uv: number[] = [];
@@ -296,7 +417,11 @@ function torsoGeometry(
       const phiF = Math.atan2(Math.sin(phi), Math.cos(phi));
       const yTop = typeof top === 'number' ? top : top(phiF);
       const y = y0 + (yTop - y0) * (i / rings);
-      torsoPoint(y, phi, inflate, add, v);
+      // skin pieces are slightly narrower near the joints between segments so they
+      // never poke through clothes worn on the neighbouring segment when bending
+      const sb = endShrink[0] * (1 - smooth(0, 0.04, y - y0));
+      const st = endShrink[1] * (1 - smooth(0, 0.04, yTop - y));
+      torsoPoint(y, phi, inflate * (1 - sb - st), add, v);
       pos.push(v.x, v.y + yShift, v.z);
       uv.push(j / seg, i / rings);
     }
@@ -315,12 +440,29 @@ function torsoGeometry(
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
+  g.userData.torsoArgs = [y0, top, rings, seg, inflate, add, yShift, endShrink];
   return g;
 }
 
 /** Animated flared skirt (folds sway over time). Built in hip-space. */
+export interface Capsule {
+  a: THREE.Vector3;
+  b: THREE.Vector3;
+  r: number;
+}
+
+const _ca = new THREE.Vector3();
+const _cb = new THREE.Vector3();
+const _cv = new THREE.Vector3();
+const _cab = new THREE.Vector3();
+const _cinv = new THREE.Matrix4();
+
 class Skirt {
+  static RINGS = [0, 0.08, 0.18, 0.3, 0.42, 0.55, 0.68, 0.8, 0.9, 0.955, 0.965, 1];
+  private shape!: { yHem: number; hemA: number; hemB: number; inflate: number; seg: number };
   readonly mesh: THREE.Mesh;
+  /** Extra clearance over the legs (outer layers use more so they stay over inner ones). */
+  margin = 0.014;
   private base: Float32Array; // phi, y, a, b, t per vertex
   private geo: THREE.BufferGeometry;
   constructor(
@@ -336,7 +478,8 @@ class Skirt {
     bodyColor: THREE.Color,
     seg = 80
   ) {
-    const ts = [0, 0.08, 0.18, 0.3, 0.42, 0.55, 0.68, 0.8, 0.9, 0.955, 0.965, 1];
+    this.shape = { yHem, hemA, hemB, inflate, seg };
+    const ts = Skirt.RINGS;
     const pos: number[] = [];
     const col: number[] = [];
     const base: number[] = [];
@@ -398,9 +541,42 @@ class Skirt {
     return { a: bestA * (1 + this.foldAmp), b: bestB * (1 + this.foldAmp) };
   }
 
-  update(time: number, swayX: number, swayZ: number) {
+  /** Recompute the radii after the body proportions changed (hips/waist width). */
+  rebuildShape() {
+    const { yHem, hemA, hemB, inflate, seg } = this.shape;
+    const top = torsoAB(this.yTop);
+    const aTop = top.a * inflate + 0.004;
+    const bTop = top.b * inflate + 0.004;
+    const hipK = BODY.hip * BODY.width;
+    let o = 0;
+    Skirt.RINGS.forEach((t) => {
+      const y = this.yTop + (yHem - this.yTop) * t;
+      const e = Math.pow(t, 1.15);
+      let a = aTop + (hemA * hipK - aTop) * e;
+      let b = bTop + (hemB * hipK - bTop) * e;
+      if (y > -0.14) {
+        const tr = torsoAB(y);
+        a = Math.max(a, tr.a * inflate + 0.01);
+        b = Math.max(b, tr.b * inflate + 0.01);
+      }
+      for (let j = 0; j <= seg; j++, o += 5) {
+        this.base[o + 2] = a;
+        this.base[o + 3] = b;
+      }
+    });
+  }
+
+  update(time: number, swayX: number, swayZ: number, legs: Capsule[] = []) {
     const p = this.geo.attributes.position.array as Float32Array;
     const b = this.base;
+    // legs are given in hips space; bring them into this mesh's space
+    this.mesh.updateMatrix();
+    _cinv.copy(this.mesh.matrix).invert();
+    const caps = legs.map((c) => ({
+      a: c.a.clone().applyMatrix4(_cinv),
+      b: c.b.clone().applyMatrix4(_cinv),
+      r: c.r + this.margin,
+    }));
     for (let i = 0, v = 0; i < b.length; i += 5, v += 3) {
       const phi = b[i];
       const y = b[i + 1];
@@ -413,6 +589,26 @@ class Skirt {
       p[v] = b[i + 2] * f * Math.sin(phi) + swayX * t * t;
       p[v + 1] = y + 0.006 * ft * Math.sin(this.folds * 0.5 * phi + time * 1.3);
       p[v + 2] = b[i + 3] * f * Math.cos(phi) + swayZ * t * t;
+      if (t > 0.02 && caps.length) {
+        // keep the fabric outside the thighs / shins (it drapes over a raised knee)
+        _cv.set(p[v], p[v + 1], p[v + 2]);
+        for (const c of caps) {
+          _cab.subVectors(c.b, c.a);
+          const L2 = _cab.lengthSq() || 1e-6;
+          const u = clamp(_ca.subVectors(_cv, c.a).dot(_cab) / L2, 0, 1);
+          _cb.copy(c.a).addScaledVector(_cab, u);
+          _ca.subVectors(_cv, _cb);
+          const d = _ca.length();
+          if (d < c.r) {
+            if (d < 1e-5) _ca.set(Math.sin(phi), 0, Math.cos(phi));
+            else _ca.multiplyScalar(1 / d);
+            _cv.copy(_cb).addScaledVector(_ca, c.r);
+          }
+        }
+        p[v] = _cv.x;
+        p[v + 1] = _cv.y;
+        p[v + 2] = _cv.z;
+      }
     }
     this.geo.attributes.position.needsUpdate = true;
     this.geo.computeVertexNormals();
@@ -429,8 +625,8 @@ interface PoseDef {
 }
 
 const ARMS_DOWN: Partial<Record<JointName, JointEuler>> = {
-  leftShoulder: { x: 0.05, y: 0.15, z: 0.17 },
-  rightShoulder: { x: 0.05, y: 0.15, z: 0.17 },
+  leftShoulder: { x: 0.05, y: 0.15, z: 0.2 },
+  rightShoulder: { x: 0.05, y: 0.15, z: 0.2 },
   leftElbow: { x: -0.18 },
   rightElbow: { x: -0.18 },
   leftWrist: { z: 0.12 },
@@ -569,6 +765,18 @@ const POSES: Record<PoseName, PoseDef> = {
     },
     hands: ['relaxed', 'relaxed'],
   },
+  dancing: {
+    joints: {
+      chest: { x: -0.04 },
+      leftShoulder: { x: -0.3, y: 0.4, z: 1.0 },
+      leftElbow: { x: -1.3 },
+      rightShoulder: { x: -0.3, y: 0.4, z: 1.0 },
+      rightElbow: { x: -1.3 },
+      rightHip: { x: -0.05 },
+      rightKnee: { x: 0.12 },
+    },
+    hands: ['peace', 'open'],
+  },
   nodding: { joints: { ...ARMS_DOWN }, hands: ['relaxed', 'relaxed'] },
   shaking_head: { joints: { ...ARMS_DOWN }, hands: ['relaxed', 'relaxed'] },
 };
@@ -666,6 +874,86 @@ export class RiggedAvatar {
   private customModel: THREE.Object3D | null = null;
 
   private headContent!: THREE.Group;
+  private headGeo!: THREE.BufferGeometry;
+  private headBase!: Float32Array;
+  private headParams: HeadParams = { ...FACE_SHAPES.oval, nose: 1 };
+  private faceStyle = { eyeW: 0.0215, eyeH: 0.026, eyeTilt: 0.14, wing: 1, noseScale: 1, mouthScale: 1 };
+  private hairStyle: HairStyle = 'long';
+  private hairTie: THREE.Mesh | null = null;
+  private napeMesh: THREE.Mesh | null = null;
+  private faceKey = '';
+  private bodyKey = '1|1|1|1|1|1|1';
+  private legK = 1;
+  private limbK = 1;
+  private hipsBaseY = 0.93;
+  private anchors: (() => void)[] = [];
+  /** Behaviour tab: idle body sway / turning towards the cursor. */
+  public behavior = { idleMotion: true, idleTurn: true, idleCycle: true };
+  private basePose: PoseName = 'idle';
+  private cycleTimer = 10;
+  private cycleUntil = 0;
+  private autoPose = false;
+  private autoTimer = 20;
+  private holdUntil = 0;
+  /** Set by the companion while she roams because the user is away: livelier pose changes. */
+  public roamingIdle = false;
+
+  /** Behaviour "Enable idle rotation": alternate poses while nothing else is happening. */
+  private updateIdleCycle(dt: number) {
+    // a temporary pose (Hermes) wins until it expires
+    if (this.holdUntil) {
+      if (this.time < this.holdUntil) return;
+      this.holdUntil = 0;
+      this.applyPose(this.basePose);
+      this.cycleTimer = 6 + Math.random() * 6;
+    }
+    // "Auto" default pose: pick another default every 14–28 s (when not talking)
+    if (this.autoPose && !this.speaking) {
+      this.autoTimer -= dt;
+      if (this.autoTimer <= 0) {
+        this.autoTimer = 14 + Math.random() * 14;
+        this.basePose = this.pickAutoPose();
+        if (!this.cycleUntil && !(this.loco.active && this.loco.state !== 'idle')) this.applyPose(this.basePose);
+      }
+    }
+    const busy = this.speaking || (this.loco.active && this.loco.state !== 'idle');
+    if (!this.behavior.idleCycle || busy) {
+      if (this.cycleUntil) {
+        this.cycleUntil = 0;
+        this.applyPose(this.basePose);
+      }
+      this.cycleTimer = Math.max(this.cycleTimer, 6);
+      return;
+    }
+    if (this.cycleUntil) {
+      if (this.time >= this.cycleUntil) {
+        this.cycleUntil = 0;
+        this.applyPose(this.basePose);
+        this.cycleTimer = this.roamingIdle ? 2 + Math.random() * 3 : 9 + Math.random() * 9;
+      }
+      return;
+    }
+    this.cycleTimer -= dt * (this.roamingIdle ? 2.5 : 1);
+    if (this.cycleTimer > 0) return;
+    const variants: [PoseName, number][] = (
+      [
+        ['thinking', 3.5],
+        ['listening', 3],
+        ['nodding', 2],
+        ['happy', 2.5],
+        ['explaining', 3],
+        ['focused', 3],
+        ['dancing', 4],
+        ['greeting', 2.2],
+        ['shrugging', 2.2],
+      ] as [PoseName, number][]
+    ).filter(([p]) => p !== this.basePose);
+    const [p, d] = variants[Math.floor(Math.random() * variants.length)];
+    this.applyPose(p);
+    this.cycleUntil = this.time + d;
+  }
+  /** Set when proportions changed; renderers re-fit their camera and clear it. */
+  public bodyChanged = false;
   private chestVolume!: THREE.Group;
   private face!: FaceCanvas;
   private hair!: StrandSystem;
@@ -688,6 +976,46 @@ export class RiggedAvatar {
   private satinSkirtMat!: THREE.MeshStandardMaterial;
   private headphoneBandMat!: THREE.MeshStandardMaterial;
   private headphoneGlowMat!: THREE.MeshBasicMaterial;
+  private shoeMat!: THREE.MeshStandardMaterial;
+  private shirtWhiteMat!: THREE.MeshStandardMaterial;
+  private outfitParts: Record<OutfitStyle, THREE.Object3D[]> = {
+    casual: [],
+    formal: [],
+    sporty: [],
+    elegant: [],
+    cyberpunk: [],
+    fantasy: [],
+  };
+
+  private addOutfitPart<T extends THREE.Object3D>(style: OutfitStyle, obj: T): T {
+    this.outfitParts[style].push(obj);
+    return obj;
+  }
+
+  private normalizeOutfitStyle(outfit?: string): OutfitStyle {
+    switch (outfit) {
+      case 'formal':
+      case 'sporty':
+      case 'elegant':
+      case 'cyberpunk':
+      case 'fantasy':
+      case 'casual':
+        return outfit;
+      case 'noir-gold':
+      default:
+        return 'casual';
+    }
+  }
+
+  private applyOutfitStyle(outfit?: string) {
+    const active = this.normalizeOutfitStyle(outfit);
+    (Object.keys(this.outfitParts) as OutfitStyle[]).forEach((k) => {
+      const vis = k === active;
+      this.outfitParts[k].forEach((obj) => {
+        obj.visible = vis;
+      });
+    });
+  }
 
   // face state
   private targetFace: Required<FacialState>;
@@ -762,6 +1090,7 @@ export class RiggedAvatar {
 
     this.joints = {} as Record<JointName, THREE.Group>;
     this.initMaterials();
+    this.applyFaceSettings(this.appearance);
     this.buildBody();
 
     ALL_JOINTS.forEach((n) => {
@@ -769,9 +1098,12 @@ export class RiggedAvatar {
       this.current[n] = { x: 0, y: 0, z: 0 };
     });
 
+    this.applyBody(this.appearance);
     this.root.updateMatrixWorld(true);
     this.buildHair();
     this.buildSash();
+    this.addOutfitPart('casual', this.sash.mesh); // the back bow + ribbons belong to the casual (noir-gold) dress
+    this.applyOutfitStyle(this.appearance.outfit);
 
     this.setPose('idle');
     this.setEmotion('neutral');
@@ -867,9 +1199,22 @@ export class RiggedAvatar {
       emissive: new THREE.Color(this.appearance.headphoneColor || '#E6C26E').multiplyScalar(0.15),
     });
     this.headphoneGlowMat = new THREE.MeshBasicMaterial({ color: '#FFD978' });
+    this.shoeMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(this.appearance.shoeColor || primary),
+      roughness: 0.32,
+      metalness: 0.3,
+    });
+    this.shirtWhiteMat = new THREE.MeshStandardMaterial({
+      color: '#F5F6FA',
+      roughness: 0.55,
+      metalness: 0.05,
+    });
   }
 
   private getOutfitPrimaryColor(): THREE.Color {
+    if (this.appearance.clothingColor) {
+      return new THREE.Color(this.appearance.clothingColor);
+    }
     switch (this.appearance.outfit) {
       case 'casual':
         return new THREE.Color('#2E4A7D');
@@ -877,6 +1222,12 @@ export class RiggedAvatar {
         return new THREE.Color('#141418');
       case 'sporty':
         return new THREE.Color('#C94A38');
+      case 'elegant':
+        return new THREE.Color('#5C2D1E');
+      case 'cyberpunk':
+        return new THREE.Color('#1A0B2E');
+      case 'fantasy':
+        return new THREE.Color('#4B2C6E');
       case 'noir-gold':
       default:
         return new THREE.Color('#0D0D12');
@@ -884,11 +1235,20 @@ export class RiggedAvatar {
   }
 
   private getOutfitAccentColor(): THREE.Color {
+    if (this.appearance.accessoryColor) {
+      return new THREE.Color(this.appearance.accessoryColor);
+    }
     switch (this.appearance.outfit) {
       case 'casual':
         return new THREE.Color('#F5DFA0');
       case 'sporty':
         return new THREE.Color('#FFFFFF');
+      case 'elegant':
+        return new THREE.Color('#20B2AA');
+      case 'cyberpunk':
+        return new THREE.Color('#FF00CC');
+      case 'fantasy':
+        return new THREE.Color('#FFD700');
       case 'formal':
       case 'noir-gold':
       default:
@@ -918,12 +1278,14 @@ export class RiggedAvatar {
     const chest = this.joint('chest', spine, 0, CHEST_Y - 0.1, 0);
 
     // --- Skin torso (pelvis / abdomen / chest) --------------------------------
-    hips.add(new THREE.Mesh(torsoGeometry(-0.15, 0.1, 10, 40, 1, 0, 0), this.skinMat));
-    spine.add(new THREE.Mesh(torsoGeometry(0.06, 0.26, 8, 40, 1, 0, -0.1), this.skinMat));
+    // pelvis is always covered by a fitted satin base layer (briefs/bodysuit), so raising a leg
+    // under a skirt or between trouser legs never reveals bare skin
+    hips.add(new THREE.Mesh(torsoGeometry(-0.15, 0.1, 10, 40, 1, 0, 0, [0, 0.07]), this.satinMat));
+    spine.add(new THREE.Mesh(torsoGeometry(0.07, 0.26, 8, 40, 1, 0, -0.1, [0.07, 0.05]), this.skinMat));
     this.chestVolume = new THREE.Group();
     this.chestVolume.position.y = 0;
     chest.add(this.chestVolume);
-    this.chestVolume.add(new THREE.Mesh(torsoGeometry(0.2, 0.5, 18, 48, 1, 0, -CHEST_Y), this.skinMat));
+    this.chestVolume.add(new THREE.Mesh(torsoGeometry(0.2, 0.5, 18, 48, 1, 0, -CHEST_Y, [0.06, 0]), this.skinMat));
 
     // collarbone hint
     [-1, 1].forEach((s) => {
@@ -945,20 +1307,22 @@ export class RiggedAvatar {
     neckMesh.position.y = -0.03;
     neck.add(neckMesh);
 
-    const choker = new THREE.Mesh(new THREE.TorusGeometry(0.0345, 0.0055, 10, 40), this.satinMat);
+    // neck skin radius at a given neck-local height (lathe 0.036 → 0.031 over 0.17, starting at y=-0.03)
+    const neckR = (y: number) => 0.036 + (0.031 - 0.036) * clamp((y + 0.03) / 0.17, 0, 1);
+    const choker = new THREE.Mesh(new THREE.TorusGeometry(neckR(0.045) + 0.0055 * 0.85, 0.0055, 10, 40), this.satinMat);
     choker.rotation.x = Math.PI / 2;
     choker.position.y = 0.045;
     neck.add(choker);
-    const chokerTrim = new THREE.Mesh(new THREE.TorusGeometry(0.0352, 0.0015, 6, 40), this.goldMat);
+    const chokerTrim = new THREE.Mesh(new THREE.TorusGeometry(neckR(0.0395) + 0.0055 * 0.85 + 0.002, 0.0015, 6, 40), this.goldMat);
     chokerTrim.rotation.x = Math.PI / 2;
     chokerTrim.position.y = 0.0395;
     neck.add(chokerTrim);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.0075, 0.0018, 8, 20), this.goldMat);
-    ring.position.set(0, 0.032, 0.037);
+    ring.position.set(0, 0.032, neckR(0.032) + 0.0095);
     neck.add(ring);
     const charm = new THREE.Mesh(new THREE.OctahedronGeometry(0.0055, 0), this.goldMat);
     charm.scale.set(0.8, 1.3, 0.5);
-    charm.position.set(0, 0.021, 0.038);
+    charm.position.set(0, 0.021, neckR(0.021) + 0.011);
     neck.add(charm);
 
     // --- Head ------------------------------------------------------------------
@@ -988,55 +1352,53 @@ export class RiggedAvatar {
         0.028 * smooth(1.3, 2.6, a)
       );
     };
-    spine.add(new THREE.Mesh(torsoGeometry(0.02, 0.25, 8, 48, 1.04, 0.002, -0.1), this.satinMat));
+    spine.add(this.addOutfitPart('casual', new THREE.Mesh(torsoGeometry(0.07, 0.25, 8, 48, 1.045, 0.003, -0.1), this.satinMat)));
     this.chestVolume.add(
-      new THREE.Mesh(torsoGeometry(0.22, bodiceTop, 12, 64, 1.04, 0.002, -CHEST_Y), this.satinMat)
+      this.addOutfitPart('casual', new THREE.Mesh(torsoGeometry(0.22, bodiceTop, 12, 64, 1.045, 0.003, -CHEST_Y), this.satinMat))
     );
 
     // Gold piping along the neckline
-    const edge: THREE.Vector3[] = [];
     const v = new THREE.Vector3();
-    for (let j = 0; j < 96; j++) {
-      const phi = Math.PI + (j / 96) * Math.PI * 2;
-      const phiF = Math.atan2(Math.sin(phi), Math.cos(phi));
-      torsoPoint(bodiceTop(phiF), phi, 1.05, 0.003, v);
-      edge.push(new THREE.Vector3(v.x, v.y - CHEST_Y, v.z));
-    }
-    this.chestVolume.add(
-      new THREE.Mesh(
-        new THREE.TubeGeometry(new THREE.CatmullRomCurve3(edge, true), 160, 0.0042, 8, true),
-        this.goldMat
-      )
-    );
-
-    // Gold corset boning seams
-    [-0.62, -0.26, 0.26, 0.62].forEach((phi) => {
-      const pts: THREE.Vector3[] = [];
-      const yTop = bodiceTop(phi) - 0.012;
-      for (let k = 0; k <= 10; k++) {
-        const y = 0.135 + (yTop - 0.135) * (k / 10);
-        torsoPoint(y, phi, 1.05, 0.003, v);
-        pts.push(new THREE.Vector3(v.x, v.y - 0.1, v.z));
+    const piping = () => {
+      const edge: THREE.Vector3[] = [];
+      for (let j = 0; j < 96; j++) {
+        const phi = Math.PI + (j / 96) * Math.PI * 2;
+        const phiF = Math.atan2(Math.sin(phi), Math.cos(phi));
+        torsoPoint(bodiceTop(phiF), phi, 1.05, 0.003, v);
+        edge.push(new THREE.Vector3(v.x, v.y - CHEST_Y, v.z));
       }
-      // split between spine and chest segments
-      const lower = pts.filter((p) => p.y + 0.1 <= 0.25).map((p) => p.clone());
-      const upper = pts.filter((p) => p.y + 0.1 >= 0.22).map((p) => new THREE.Vector3(p.x, p.y + 0.1 - CHEST_Y, p.z));
-      if (lower.length > 1)
-        spine.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(lower), 12, 0.0016, 5), this.goldMat));
-      if (upper.length > 1)
-        this.chestVolume.add(
-          new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(upper), 12, 0.0016, 5), this.goldMat)
-        );
+      return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(edge, true), 160, 0.0042, 8, true);
+    };
+    this.chestVolume.add(this.rebuildable(this.addOutfitPart('casual', new THREE.Mesh(piping(), this.goldMat)), piping));
+
+    // Gold corset boning seams (split between the spine and chest segments)
+    [-0.62, -0.26, 0.26, 0.62].forEach((phi) => {
+      const bone = (part: 'lower' | 'upper') => () => {
+        const pts: THREE.Vector3[] = [];
+        const yTop = bodiceTop(phi) - 0.012;
+        for (let k = 0; k <= 10; k++) {
+          const y = 0.135 + (yTop - 0.135) * (k / 10);
+          torsoPoint(y, phi, 1.05, 0.003, v);
+          pts.push(new THREE.Vector3(v.x, v.y - 0.1, v.z));
+        }
+        const sel =
+          part === 'lower'
+            ? pts.filter((p) => p.y + 0.1 <= 0.25).map((p) => p.clone())
+            : pts.filter((p) => p.y + 0.1 >= 0.22).map((p) => new THREE.Vector3(p.x, p.y + 0.1 - CHEST_Y, p.z));
+        return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(sel), 12, 0.0016, 5);
+      };
+      spine.add(this.rebuildable(this.addOutfitPart('casual', new THREE.Mesh(bone('lower')(), this.goldMat)), bone('lower')));
+      this.chestVolume.add(this.rebuildable(this.addOutfitPart('casual', new THREE.Mesh(bone('upper')(), this.goldMat)), bone('upper')));
     });
 
     // Gold waist belt + buckle
-    spine.add(new THREE.Mesh(torsoGeometry(0.105, 0.13, 2, 64, 1.075, 0.003, -0.1), this.goldMat));
-    const buckle = new THREE.Mesh(new THREE.OctahedronGeometry(0.016, 0), this.goldMat);
+    spine.add(this.addOutfitPart('casual', new THREE.Mesh(torsoGeometry(0.105, 0.13, 2, 64, 1.075, 0.003, -0.1), this.goldMat)));
+    const buckle = this.addOutfitPart('casual', new THREE.Mesh(new THREE.OctahedronGeometry(0.016, 0), this.goldMat));
     buckle.scale.set(1, 0.8, 0.35);
-    buckle.position.set(0, 0.0175, torsoAB(0.1175).b * 1.075 + 0.006);
+    this.anchorZ(buckle, 0, 0.0175, 0.1175, 1.075, 0.006, 1);
     spine.add(buckle);
-    const gem = new THREE.Mesh(new THREE.SphereGeometry(0.0055, 12, 10), this.headphoneGlowMat);
-    gem.position.set(0, 0.0175, torsoAB(0.1175).b * 1.075 + 0.011);
+    const gem = this.addOutfitPart('casual', new THREE.Mesh(new THREE.SphereGeometry(0.0055, 12, 10), this.headphoneGlowMat));
+    this.anchorZ(gem, 0, 0.0175, 0.1175, 1.075, 0.011, 1);
     spine.add(gem);
 
     // Opaque black satin under-skirt + sheer chiffon over-skirt, both gold-hemmed
@@ -1056,23 +1418,126 @@ export class RiggedAvatar {
       prim.clone().lerp(new THREE.Color('#2a2430'), 0.4)
     );
     outer.mesh.renderOrder = 2;
-    hips.add(inner.mesh);
-    hips.add(outer.mesh);
+    outer.margin = 0.036;
+    hips.add(this.addOutfitPart('casual', inner.mesh));
+    hips.add(this.addOutfitPart('casual', outer.mesh));
     this.skirts = [inner, outer];
     this.outerSkirt = outer;
 
     // Sheer bow at the back of the waist
     [-1, 1].forEach((s) => {
-      const loop = new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.008, 8, 24), this.sashMat);
+      const loop = this.addOutfitPart('casual', new THREE.Mesh(new THREE.TorusGeometry(0.028, 0.008, 8, 24), this.sashMat));
       loop.scale.set(1, 0.62, 0.35);
       loop.rotation.z = s * 0.35;
-      loop.position.set(s * 0.03, 0.022, -(torsoAB(0.12).b * 1.075 + 0.012));
+      this.anchorZ(loop, s * 0.03, 0.022, 0.12, 1.075, 0.012, -1);
       spine.add(loop);
     });
-    const knot = new THREE.Mesh(new THREE.SphereGeometry(0.011, 12, 10), this.goldMat);
+    const knot = this.addOutfitPart('casual', new THREE.Mesh(new THREE.SphereGeometry(0.011, 12, 10), this.goldMat));
     knot.scale.set(1, 0.9, 0.6);
-    knot.position.set(0, 0.02, -(torsoAB(0.12).b * 1.075 + 0.012));
+    this.anchorZ(knot, 0, 0.02, 0.12, 1.075, 0.012, -1);
     spine.add(knot);
+
+    // --- FORMAL: Tailored blazer + white collared shirt + trousers ---
+    spine.add(this.addOutfitPart('formal', new THREE.Mesh(torsoGeometry(0.07, 0.25, 8, 48, 1.035, 0.003, -0.1), this.shirtWhiteMat)));
+    this.chestVolume.add(
+      this.addOutfitPart(
+        'formal',
+        new THREE.Mesh(
+          torsoGeometry(0.22, (phi) => 0.345 - 0.035 * Math.exp(-(phi * phi) / 0.04), 10, 48, 1.03, 0.002, -CHEST_Y),
+          this.shirtWhiteMat
+        )
+      )
+    );
+    spine.add(this.addOutfitPart('formal', new THREE.Mesh(torsoGeometry(0.0, 0.25, 8, 48, 1.075, 0.005, -0.1), this.satinMat)));
+    this.chestVolume.add(
+      this.addOutfitPart(
+        'formal',
+        new THREE.Mesh(
+          torsoGeometry(0.22, (phi) => (Math.abs(phi) < 0.26 ? 0.21 : 0.35), 10, 56, 1.075, 0.005, -CHEST_Y),
+          this.satinMat
+        )
+      )
+    );
+    hips.add(this.addOutfitPart('formal', new THREE.Mesh(torsoGeometry(-0.15, 0.06, 8, 40, 1.06, 0.004, 0), this.satinMat)));
+
+    // --- SPORTY: Athletic crop top + high-waist shorts ---
+    this.chestVolume.add(
+      this.addOutfitPart(
+        'sporty',
+        new THREE.Mesh(
+          torsoGeometry(0.235, (phi) => 0.34 - 0.025 * Math.exp(-(phi * phi) / 0.06), 10, 48, 1.045, 0.002, -CHEST_Y),
+          this.satinMat
+        )
+      )
+    );
+    hips.add(this.addOutfitPart('sporty', new THREE.Mesh(torsoGeometry(-0.15, 0.09, 8, 44, 1.06, 0.003, 0), this.satinMat)));
+    spine.add(this.addOutfitPart('sporty', new THREE.Mesh(torsoGeometry(0.06, 0.11, 3, 44, 1.07, 0.003, -0.1), this.satinMat)));
+
+    // --- ELEGANT: Halter V-neck mini-dress ---
+    spine.add(this.addOutfitPart('elegant', new THREE.Mesh(torsoGeometry(0.07, 0.25, 8, 48, 1.045, 0.003, -0.1), this.satinMat)));
+    this.chestVolume.add(
+      this.addOutfitPart(
+        'elegant',
+        new THREE.Mesh(
+          torsoGeometry(0.22, (phi) => 0.335 - 0.055 * Math.exp(-(phi * phi) / 0.03), 10, 56, 1.04, 0.002, -CHEST_Y),
+          this.satinMat
+        )
+      )
+    );
+    const halterBand = this.addOutfitPart('elegant', new THREE.Mesh(new THREE.TorusGeometry(0.038, 0.006, 8, 28), this.satinMat));
+    halterBand.rotation.x = Math.PI / 2;
+    halterBand.position.y = 0.265;
+    this.chestVolume.add(halterBand);
+    const elegantSkirt = new Skirt(this.satinSkirtMat, 0.11, -0.22, 0.22, 0.18, 12, 0.035, 1.06, gold, prim);
+    hips.add(this.addOutfitPart('elegant', elegantSkirt.mesh));
+    this.skirts.push(elegantSkirt);
+
+    // --- CYBERPUNK: Strapped corset dress with front zip O-ring & buckled straps ---
+    spine.add(this.addOutfitPart('cyberpunk', new THREE.Mesh(torsoGeometry(0.07, 0.25, 8, 48, 1.05, 0.003, -0.1), this.satinMat)));
+    this.chestVolume.add(
+      this.addOutfitPart('cyberpunk', new THREE.Mesh(torsoGeometry(0.22, bodiceTop, 10, 56, 1.045, 0.002, -CHEST_Y), this.satinMat))
+    );
+    const zipLine = this.addOutfitPart('cyberpunk', new THREE.Mesh(new THREE.CylinderGeometry(0.003, 0.003, 0.18, 8), this.goldMat));
+    this.anchorZ(zipLine, 0, 0.02, 0.22, 1.06, 0, 1);
+    this.chestVolume.add(zipLine);
+    const zipRing = this.addOutfitPart('cyberpunk', new THREE.Mesh(new THREE.TorusGeometry(0.012, 0.0025, 8, 20), this.goldMat));
+    this.anchorZ(zipRing, 0, 0.09, 0.3, 1.07, 0, 1);
+    this.chestVolume.add(zipRing);
+    [-1, 1].forEach((s) => {
+      const strapCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(s * 0.075, 0.085, 0.085),
+        new THREE.Vector3(s * 0.085, 0.19, 0.01),
+        new THREE.Vector3(s * 0.075, 0.08, -0.08),
+      ]);
+      this.chestVolume.add(
+        this.addOutfitPart('cyberpunk', new THREE.Mesh(new THREE.TubeGeometry(strapCurve, 16, 0.008, 6, false), this.satinMat))
+      );
+      const bkl = this.addOutfitPart('cyberpunk', new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.018, 0.008), this.goldMat));
+      bkl.position.set(s * 0.08, 0.135, 0.065);
+      this.chestVolume.add(bkl);
+    });
+    const cyberSkirt = new Skirt(this.satinSkirtMat, 0.11, -0.28, 0.27, 0.22, 14, 0.055, 1.07, gold, prim);
+    hips.add(this.addOutfitPart('cyberpunk', cyberSkirt.mesh));
+    this.skirts.push(cyberSkirt);
+
+    // --- FANTASY: Fairy sheer asymmetrical bodice + draped tulle skirt + butterfly accents ---
+    spine.add(this.addOutfitPart('fantasy', new THREE.Mesh(torsoGeometry(0.07, 0.25, 8, 48, 1.045, 0.003, -0.1), this.sheerMat)));
+    this.chestVolume.add(
+      this.addOutfitPart('fantasy', new THREE.Mesh(torsoGeometry(0.22, bodiceTop, 10, 56, 1.04, 0.002, -CHEST_Y), this.sheerMat))
+    );
+    const fairySkirt = new Skirt(this.sheerSkirtMat, 0.11, -0.38, 0.3, 0.25, 12, 0.065, 1.08, gold, prim);
+    fairySkirt.mesh.rotation.z = 0.09; // asymmetrical draped hem
+    fairySkirt.mesh.renderOrder = 2;
+    fairySkirt.margin = 0.024;
+    hips.add(this.addOutfitPart('fantasy', fairySkirt.mesh));
+    this.skirts.push(fairySkirt);
+    [-1, 1].forEach((s) => {
+      const wing = this.addOutfitPart('fantasy', new THREE.Mesh(new THREE.CircleGeometry(0.024, 14), this.goldMat));
+      wing.scale.set(1.2, 0.75, 1);
+      wing.rotation.z = s * 0.4;
+      this.anchorZ(wing, s * 0.018, 0.055, 0.27, 1.08, 0, 1);
+      this.chestVolume.add(wing);
+    });
   }
 
   // --------------------------------------------------------------------------
@@ -1081,23 +1546,179 @@ export class RiggedAvatar {
 
   private deformHead(v: THREE.Vector3) {
     const R = 0.115;
+    const P = this.headParams;
     let { x, y, z } = v;
     const t = clamp(-y / R, 0, 1);
-    y = y < 0 ? y * 1.13 : y * 1.03;
-    x *= (1 - 0.3 * t - 0.12 * t * t) * (1 + 0.035 * Math.exp(-(((t - 0.3) / 0.2) ** 2)));
+    y = y < 0 ? y * P.yLow : y * 1.03;
+    const taper = P.taper1 * t + P.taper2 * t * t + P.chinPoint * Math.pow(smooth(0.72, 1, t), 2);
+    x *= Math.max(0.05, 1 - taper) * (1 + P.cheek * Math.exp(-(((t - P.cheekT) / 0.2) ** 2)));
     z *= 1 - 0.1 * t;
     if (z > 0) z *= 0.93;
     else z *= 1.08;
     if (z > 0) {
-      z += 0.0065 * Math.exp(-(x * x) / 0.008 ** 2 - ((y + 0.05) ** 2) / 0.014 ** 2); // nose
+      const ns = P.nose;
+      z += 0.0065 * ns * Math.exp(-(x * x) / (0.008 * ns) ** 2 - ((y + 0.05) ** 2) / (0.014 * ns) ** 2); // nose
       z += 0.006 * t * t; // chin forward
     }
     v.set(x, y, z);
   }
 
+  /** Place a decoration on the torso surface (front +1 / back -1) and keep it there when the body changes. */
+  private anchorZ(obj: THREE.Object3D, x: number, y: number, yh: number, k: number, c: number, side: 1 | -1) {
+    const place = () => obj.position.set(x * BODY.width, y, side * (torsoAB(yh).b * k + c));
+    place();
+    this.anchors.push(place);
+  }
+
+  /** Mesh whose geometry is regenerated when the body proportions change. */
+  private rebuildable<T extends THREE.Mesh>(mesh: T, make: () => THREE.BufferGeometry): T {
+    mesh.userData.rebuild = make;
+    return mesh;
+  }
+
+  /** Scale the meshes hanging directly from a limb joint (thickness kxz, length ky). */
+  private scaleLimbMeshes(joint: THREE.Object3D, kxz: number, ky: number) {
+    joint.children.forEach((c) => {
+      if (!(c as THREE.Mesh).isMesh || this.isJoint(c)) return;
+      const ud = c.userData;
+      if (!ud.base) ud.base = { py: c.position.y, s: c.scale.clone() };
+      const b = ud.base;
+      c.position.y = b.py * ky;
+      const r = c.rotation;
+      const ring = Math.abs(Math.abs(r.x) - Math.PI / 2) < 0.01 && Math.abs(r.y) < 0.01 && Math.abs(r.z) < 0.01;
+      const plain = Math.abs(r.x) < 0.01 && Math.abs(r.y) < 0.01 && Math.abs(r.z) < 0.01;
+      if (plain) c.scale.set(b.s.x * kxz, b.s.y * ky, b.s.z * kxz);
+      else if (ring) c.scale.set(b.s.x * kxz, b.s.y * kxz, b.s.z);
+      else c.scale.copy(b.s).multiplyScalar(kxz);
+    });
+  }
+
+  private isJoint(o: THREE.Object3D) {
+    return Object.values(this.joints).includes(o as THREE.Group);
+  }
+
+  /** Body tab: body type + height / width / shoulders / waist. */
+  private applyBody(a: Partial<AppearanceConfig>) {
+    const num = (v: any, d: number) => (v === undefined || v === null || v === '' || isNaN(Number(v)) ? d : Number(v));
+    const type = (BODY_TYPES as any)[String(a.bodyType ?? 'average')] ? (String(a.bodyType ?? 'average') as BodyType) : 'average';
+    const T = BODY_TYPES[type];
+    const width = clamp(1 + (num(a.bodyWidth, 100) - 100) / 250, 0.8, 1.2) * T.width;
+    const shoulder = clamp(1 + (num(a.shoulderWidth, 100) - 100) / 250, 0.8, 1.2) * T.shoulder;
+    const waist = clamp(1 + (num(a.waistSize, 80) - 80) / 150, 0.78, 1.3) * T.waist;
+    const legK = clamp(1 + (num(a.bodyHeight, 150) - 150) / 250, 0.8, 1.2) * T.leg;
+    const limbK = (1 + (width - 1) * 0.6) * T.limb;
+    const key = [width, shoulder, waist, T.hip, T.bust, legK, limbK].map((n) => n.toFixed(3)).join('|');
+    if (key === this.bodyKey) return false;
+    this.bodyKey = key;
+
+    Object.assign(BODY, { width, shoulder, waist, hip: T.hip, bust: T.bust });
+    this.legK = legK;
+    this.limbK = limbK;
+
+    // torso geometry (skin + every garment built from the torso profile)
+    this.root.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const args = m.geometry?.userData?.torsoArgs;
+      const make = m.userData.rebuild as (() => THREE.BufferGeometry) | undefined;
+      if (args || make) {
+        const g = args ? (torsoGeometry as any)(...args) : make!();
+        m.geometry.dispose();
+        m.geometry = g;
+      }
+    });
+    this.skirts.forEach((sk) => sk.rebuildShape());
+    this.anchors.forEach((f) => f());
+
+    // skeleton proportions
+    const hipF = bodyFactor(-0.06);
+    const shF = bodyFactor(0.43);
+    (['left', 'right'] as Side[]).forEach((sd) => {
+      const sg = sd === 'left' ? 1 : -1;
+      this.joints[`${sd}Hip` as JointName].position.x = sg * 0.085 * hipF;
+      this.joints[`${sd}Clavicle` as JointName].position.x = sg * 0.02 * width;
+      this.joints[`${sd}Shoulder` as JointName].position.x = sg * 0.13 * shF;
+      this.joints[`${sd}Knee` as JointName].position.y = -THIGH.len * legK;
+      this.joints[`${sd}Ankle` as JointName].position.y = -SHIN.len * legK;
+      this.joints[`${sd}Elbow` as JointName] && this.scaleLimbMeshes(this.joints[`${sd}Elbow` as JointName], limbK, 1);
+      this.scaleLimbMeshes(this.joints[`${sd}Shoulder` as JointName], limbK, 1);
+      this.scaleLimbMeshes(this.joints[`${sd}Hip` as JointName], limbK * Math.sqrt(T.hip), legK);
+      this.scaleLimbMeshes(this.joints[`${sd}Knee` as JointName], limbK, legK);
+    });
+    this.hipsBaseY = 0.93 + (THIGH.len + SHIN.len) * (legK - 1);
+    this.joints.hips.position.y = this.hipsBaseY;
+    this.root.updateMatrixWorld(true);
+    if (this.hair) this.setHairStyle(this.hairStyle, true);
+    return true;
+  }
+
+  /** Re-shape the head (face shape / roundness / nose) in place; the face decal shares these vertices. */
+  private reshapeHead() {
+    const p = this.headGeo.attributes.position as THREE.BufferAttribute;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < p.count; i++) {
+      v.set(this.headBase[i * 3], this.headBase[i * 3 + 1], this.headBase[i * 3 + 2]);
+      this.deformHead(v);
+      p.setXYZ(i, v.x, v.y, v.z);
+    }
+    p.needsUpdate = true;
+    this.headGeo.computeVertexNormals();
+    this.headGeo.computeBoundingSphere();
+  }
+
+  private applyFaceSettings(a: Partial<AppearanceConfig>) {
+    const num = (v: any, d: number) => (v === undefined || v === null || v === '' || isNaN(Number(v)) ? d : Number(v));
+    const shape = (FACE_SHAPES as any)[String(a.faceShape ?? 'oval')] ? (String(a.faceShape ?? 'oval') as FaceShape) : 'oval';
+    const round = clamp(num(a.faceRoundness, 50) / 100, 0, 1);
+    const nose = clamp(0.5 + num(a.noseSize, 50) / 100, 0.6, 1.5);
+    const eyeStyle = (EYE_STYLES as any)[String(a.eyeStyle ?? 'normal')] ? (String(a.eyeStyle ?? 'normal') as EyeStyle) : 'normal';
+    const eyeK = clamp(0.7 + (0.6 * num(a.eyeSize, 50)) / 100, 0.75, 1.35);
+    const mouthK = clamp(0.6 + (0.8 * num(a.mouthSize, 50)) / 100, 0.7, 1.45);
+
+    const headKey = `${shape}|${round}|${nose}`;
+    if (headKey !== this.faceKey) {
+      this.faceKey = headKey;
+      const base = FACE_SHAPES[shape];
+      const k = 1 + (0.5 - round) * 0.7; // less round → more tapered jaw
+      this.headParams = {
+        ...base,
+        taper1: base.taper1 * k,
+        taper2: base.taper2 * k,
+        chinPoint: base.chinPoint * k,
+        cheek: Math.max(0, base.cheek + (round - 0.5) * 0.06),
+        yLow: base.yLow - (round - 0.5) * 0.08,
+        nose,
+      };
+      if (this.headGeo) this.reshapeHead();
+    }
+    const es = EYE_STYLES[eyeStyle];
+    this.faceStyle = {
+      eyeW: 0.0215 * es.w * eyeK,
+      eyeH: 0.026 * es.h * eyeK,
+      eyeTilt: es.tilt,
+      wing: es.wing,
+      noseScale: nose,
+      mouthScale: mouthK,
+    };
+    const hs = String(a.hairStyle ?? this.hairStyle) as HairStyle;
+    if (['long', 'short', 'curly', 'ponytail'].includes(hs) && hs !== this.hairStyle) this.setHairStyle(hs);
+  }
+
+  /** Rebuild the hair strands for another hairstyle. */
+  public setHairStyle(style: HairStyle, force = false) {
+    if (style === this.hairStyle && !force && this.hair) return;
+    this.hairStyle = style;
+    if (!this.hair) return;
+    this.headContent.remove(this.hair.mesh);
+    this.hair.mesh.geometry.dispose();
+    this.buildHair();
+  }
+
   private buildHead(hc: THREE.Group) {
     const headGeo = new THREE.SphereGeometry(0.115, 72, 54);
     const p = headGeo.attributes.position;
+    this.headGeo = headGeo;
+    this.headBase = new Float32Array(p.array as Float32Array);
     const v = new THREE.Vector3();
     for (let i = 0; i < p.count; i++) {
       v.fromBufferAttribute(p, i);
@@ -1177,6 +1798,7 @@ export class RiggedAvatar {
     (nape.material as THREE.MeshStandardMaterial).side = THREE.DoubleSide;
     nape.position.set(0, -0.07, -0.012);
     hc.add(nape);
+    this.napeMesh = nape;
 
   }
 
@@ -1339,6 +1961,29 @@ export class RiggedAvatar {
     this.refreshCollisionMatrices();
     const defs: StrandDef[] = [];
     const S = HEAD_SCALE;
+    const style = this.hairStyle;
+    // length multipliers per hairstyle
+    const L = {
+      long: { side: 1, under: 1, back: 1 },
+      short: { side: 0.5, under: 0.42, back: 0.46 },
+      curly: { side: 0.9, under: 0.8, back: 0.82 },
+      ponytail: { side: 0.42, under: 0, back: 1 },
+    }[style];
+    const curl = style === 'curly';
+    const vol = curl ? 1.18 : 1;
+
+    /** Spiral the strand (curly hair): offset grows from the root, keeps the overall drape. */
+    const curlify = (pts: THREE.Vector3[], phase: number, amp = 0.016) => {
+      if (!curl) return pts;
+      const n = pts.length;
+      return pts.map((p, i) => {
+        if (i === 0) return p;
+        const t = i / (n - 1);
+        const a = phase + i * 1.35;
+        const k = amp * smooth(0, 0.3, t) * (0.8 + 0.4 * t);
+        return new THREE.Vector3(p.x + Math.cos(a) * k, p.y + Math.sin(a * 0.5) * k * 0.25, p.z + Math.sin(a) * k);
+      });
+    };
 
     // Blunt anime bangs (two interleaved layers), tips stop above the eyebrows
     for (let layer = 0; layer < 2; layer++) {
@@ -1351,7 +1996,7 @@ export class RiggedAvatar {
         const rest = this.drape(this.scalpPoint(phi, 1.0 - side * 0.12), 0.011, { tipY: Math.max(tipY, 0.028) });
         defs.push({
           rest,
-          width0: 0.03 * S,
+          width0: 0.03 * S * (curl ? 1.1 : 1),
           width1: 0.006 * S,
           thick0: 0.011 * S,
           thick1: 0.004 * S,
@@ -1362,70 +2007,118 @@ export class RiggedAvatar {
       }
     }
 
-    // Face-framing side locks (outside the eye area), long and straight
+    // Face-framing side locks (outside the eye area)
     [-1, 1].forEach((s) => {
       [0.98, 1.1, 1.22, 1.34].forEach((ph, k) => {
         const rest = this.drape(this.scalpPoint(s * ph, 0.5 - k * 0.06), 0.03, {
-          length: 0.5 - k * 0.03,
+          length: (0.5 - k * 0.03) * L.side,
           drift: 0.35,
           driftBelow: -0.2,
         });
         defs.push({
-          rest,
-          width0: 0.05 * S,
-          width1: 0.012 * S,
+          rest: curlify(rest, k * 1.7 + s),
+          width0: 0.05 * S * vol,
+          width1: 0.012 * S * vol,
           thick0: 0.009 * S,
           thick1: 0.004 * S,
           stiff0: 0.5,
-          stiff1: 0.03,
+          stiff1: curl ? 0.07 : 0.03,
           shade: k ? 0.9 : 1.02,
         });
       });
     });
 
     // Under-cup locks (fill the sides below the headphones)
-    [-1, 1].forEach((s) => {
-      [1.46, 1.6, 1.74].forEach((ph) => {
-        const rest = this.drape(this.scalpPoint(s * ph, -0.55, 0.11), 0.035, { length: 0.5, drift: 0.3, driftBelow: -0.18 });
-        defs.push({
-          rest,
-          width0: 0.065 * S,
-          width1: 0.016 * S,
-          thick0: 0.01 * S,
-          thick1: 0.004 * S,
-          stiff0: 0.45,
-          stiff1: 0.025,
-          shade: 0.88,
+    if (L.under > 0) {
+      [-1, 1].forEach((s) => {
+        [1.46, 1.6, 1.74].forEach((ph, k) => {
+          const rest = this.drape(this.scalpPoint(s * ph, -0.55, 0.11), 0.035, {
+            length: 0.5 * L.under,
+            drift: 0.3,
+            driftBelow: -0.18,
+          });
+          defs.push({
+            rest: curlify(rest, k * 2.1 + s * 0.5),
+            width0: 0.065 * S * vol,
+            width1: 0.016 * S * vol,
+            thick0: 0.01 * S,
+            thick1: 0.004 * S,
+            stiff0: 0.45,
+            stiff1: curl ? 0.06 : 0.025,
+            shade: 0.88,
+          });
         });
       });
-    });
+    }
 
-    // Long straight back hair: outer + inner layer
-    const backLayers = [
-      { n: 30, from: 1.84, elev: 0.72, len: 0.66, w: 0.075, shade: 1, step: 0.04 },
-      { n: 22, from: 1.95, elev: 0.5, len: 0.6, w: 0.08, shade: 0.78, step: 0.04 },
-    ];
-    backLayers.forEach((L) => {
-      for (let i = 0; i < L.n; i++) {
-        const phi = L.from + (i / (L.n - 1)) * (Math.PI * 2 - 2 * L.from);
-        const lenJitter = 1 + 0.06 * Math.sin(i * 1.7) - 0.05 * Math.abs(Math.cos(phi));
-        const rest = this.drape(this.scalpPoint(phi, L.elev), L.step, {
-          length: L.len * lenJitter,
-          drift: 0.45,
-          driftBelow: -0.1,
-        });
+    if (this.napeMesh) this.napeMesh.visible = style !== 'ponytail'; // the nape is visible with a ponytail
+    if (style === 'ponytail') {
+      // Back hair gathered over the scalp to a tie, then a swinging tail
+      const tie = new THREE.Vector3(0, 0.03, -0.158);
+      const onScalp = (p: THREE.Vector3) => {
+        const c = new THREE.Vector3(0, -0.004, -0.006);
+        const rz = p.z > -0.006 ? 0.12 : 0.145;
+        const e = Math.hypot(p.x / 0.13, (p.y - c.y) / 0.133, (p.z - c.z) / rz);
+        if (e < 1) p.set(p.x / e, c.y + (p.y - c.y) / e, c.z + (p.z - c.z) / e);
+        return p;
+      };
+      const n = 26;
+      for (let i = 0; i < n; i++) {
+        const phi = 1.5 + (i / (n - 1)) * (Math.PI * 2 - 3.0);
+        const root = this.scalpPoint(phi, i % 2 ? 0.25 : 0.62);
+        const gather: THREE.Vector3[] = [];
+        for (let k = 0; k <= 4; k++) gather.push(onScalp(root.clone().lerp(tie, k / 4)));
+        const ang = (i / n) * Math.PI * 2;
+        const start = tie.clone().add(new THREE.Vector3(Math.cos(ang) * 0.012, -0.004, Math.sin(ang) * 0.01 - 0.004));
+        const tail = this.drape(start, 0.035, { length: 0.5 + 0.06 * Math.sin(i * 1.3), drift: 0.15, driftBelow: -0.12 });
         defs.push({
-          rest,
-          width0: L.w * S,
-          width1: 0.02 * S,
-          thick0: 0.011 * S,
+          rest: [...gather, ...tail.slice(1)],
+          width0: 0.06 * S,
+          width1: 0.014 * S,
+          thick0: 0.01 * S,
           thick1: 0.005 * S,
-          stiff0: 0.42,
-          stiff1: 0.018,
-          shade: L.shade * (1 + 0.05 * Math.sin(i * 2.3)),
+          stiff0: 0.9,
+          stiff1: 0.02,
+          shade: i % 2 ? 0.82 : 1,
         });
       }
-    });
+      if (!this.hairTie) {
+        this.hairTie = new THREE.Mesh(new THREE.TorusGeometry(0.017, 0.0055, 10, 24), this.goldMat);
+        this.hairTie.rotation.x = Math.PI / 2 - 0.5;
+        this.headContent.add(this.hairTie);
+      }
+      this.hairTie.position.copy(tie).add(new THREE.Vector3(0, -0.006, -0.004));
+      this.hairTie.visible = true;
+    } else {
+      if (this.hairTie) this.hairTie.visible = false;
+      // Straight back hair: outer + inner layer
+      const backLayers = [
+        { n: 30, from: 1.84, elev: 0.72, len: 0.66, w: 0.075, shade: 1, step: 0.04 },
+        { n: 22, from: 1.95, elev: 0.5, len: 0.6, w: 0.08, shade: 0.78, step: 0.04 },
+      ];
+      backLayers.forEach((B, li) => {
+        for (let i = 0; i < B.n; i++) {
+          const phi = B.from + (i / (B.n - 1)) * (Math.PI * 2 - 2 * B.from);
+          const lenJitter = 1 + 0.06 * Math.sin(i * 1.7) - 0.05 * Math.abs(Math.cos(phi));
+          const step = style === 'short' ? 0.028 : B.step;
+          const rest = this.drape(this.scalpPoint(phi, B.elev), step, {
+            length: B.len * lenJitter * L.back,
+            drift: style === 'short' ? 0.6 : 0.45,
+            driftBelow: -0.1,
+          });
+          defs.push({
+            rest: curlify(rest, i * 0.9 + li * 2, 0.02),
+            width0: B.w * S * vol,
+            width1: (style === 'short' ? 0.035 : 0.02) * S * vol,
+            thick0: 0.011 * S,
+            thick1: 0.005 * S,
+            stiff0: 0.42,
+            stiff1: curl ? 0.06 : style === 'short' ? 0.05 : 0.018,
+            shade: B.shade * (1 + 0.05 * Math.sin(i * 2.3)),
+          });
+        }
+      });
+    }
 
     this.hair = new StrandSystem(
       this.headContent,
@@ -1503,25 +2196,51 @@ export class RiggedAvatar {
     delt.scale.set(1, 1.05, 0.95);
     delt.position.set(s * 0.004, -0.01, 0);
     shoulder.add(delt);
-    shoulder.add(new THREE.Mesh(limbGeometry(0.038, 0.029, 0.27, 0.25, 0.004), this.skinMat));
+    shoulder.add(new THREE.Mesh(skinLimb(UPPER_ARM), this.skinMat));
 
     const elbow = this.joint(`${P}Elbow` as JointName, shoulder, 0, -0.27, 0, 'XYZ');
-    elbow.add(new THREE.Mesh(limbGeometry(0.03, 0.021, 0.24, 0.22, 0.005), this.skinMat));
+    elbow.add(new THREE.Mesh(skinLimb(FOREARM), this.skinMat));
 
-    // Sheer opera glove (forearm + lower upper arm) with gold cuffs
-    const gloveUpper = new THREE.Mesh(limbGeometry(0.0335, 0.0315, 0.13, 0, 0, 18, false), this.sheerMat);
-    gloveUpper.position.y = -0.14;
-    shoulder.add(gloveUpper);
-    const cuffTop = new THREE.Mesh(new THREE.TorusGeometry(0.0335, 0.0028, 8, 28), this.goldMat);
+    // Sheer opera glove (lower upper arm + elbow + forearm) with gold cuffs (Casual)
+    const G = { scale: 1.07, add: 0.0025 };
+    shoulder.add(this.addOutfitPart('casual', new THREE.Mesh(sleeveGeometry(UPPER_ARM, -0.14, -0.27, G.scale, G.add, 18), this.sheerMat)));
+    const cuffTop = this.addOutfitPart(
+      'casual',
+      new THREE.Mesh(new THREE.TorusGeometry(sleeveRadius(UPPER_ARM, -0.14, G.scale, G.add) + 0.0022, 0.0028, 8, 28), this.goldMat)
+    );
     cuffTop.rotation.x = Math.PI / 2;
     cuffTop.position.y = -0.14;
     shoulder.add(cuffTop);
-    const gloveFore = new THREE.Mesh(limbGeometry(0.0335, 0.0245, 0.235, 0.22, 0.005, 18, false), this.sheerMat);
-    elbow.add(gloveFore);
-    const cuffWrist = new THREE.Mesh(new THREE.TorusGeometry(0.0245, 0.0026, 8, 24), this.goldMat);
+    const gloveElbow = this.addOutfitPart(
+      'casual',
+      new THREE.Mesh(new THREE.SphereGeometry(Math.max(UPPER_ARM.rBot, FOREARM.rTop) * G.scale + G.add + 0.001, 16, 12), this.sheerMat)
+    );
+    elbow.add(gloveElbow);
+    elbow.add(this.addOutfitPart('casual', new THREE.Mesh(sleeveGeometry(FOREARM, 0, -0.232, G.scale, G.add, 18), this.sheerMat)));
+    const cuffWrist = this.addOutfitPart(
+      'casual',
+      new THREE.Mesh(new THREE.TorusGeometry(sleeveRadius(FOREARM, -0.225, G.scale, G.add) + 0.002, 0.0026, 8, 24), this.goldMat)
+    );
     cuffWrist.rotation.x = Math.PI / 2;
     cuffWrist.position.y = -0.225;
     elbow.add(cuffWrist);
+
+    // Tailored blazer sleeves + white shirt cuffs (Formal)
+    const B = { scale: 1.12, add: 0.005 };
+    const bShoulder = this.addOutfitPart('formal', new THREE.Mesh(new THREE.SphereGeometry(0.043 * B.scale + B.add, 20, 16), this.satinMat));
+    bShoulder.scale.set(1, 1.05, 0.95);
+    bShoulder.position.copy(delt.position);
+    shoulder.add(bShoulder);
+    shoulder.add(this.addOutfitPart('formal', new THREE.Mesh(sleeveGeometry(UPPER_ARM, 0, -0.27, B.scale, B.add, 18), this.satinMat)));
+    elbow.add(
+      this.addOutfitPart(
+        'formal',
+        new THREE.Mesh(new THREE.SphereGeometry(Math.max(UPPER_ARM.rBot, FOREARM.rTop) * B.scale + B.add, 16, 12), this.satinMat)
+      )
+    );
+    elbow.add(this.addOutfitPart('formal', new THREE.Mesh(sleeveGeometry(FOREARM, 0, -0.205, B.scale, B.add, 18), this.satinMat)));
+    const shirtCuff = this.addOutfitPart('formal', new THREE.Mesh(sleeveGeometry(FOREARM, -0.195, -0.232, 1.09, 0.003, 16), this.shirtWhiteMat));
+    elbow.add(shirtCuff);
 
     const wrist = this.joint(`${P}Wrist` as JointName, elbow, 0, -0.24, 0);
     this.buildHand(side, wrist);
@@ -1600,35 +2319,46 @@ export class RiggedAvatar {
     const s = side === 'left' ? 1 : -1;
     const P = side;
     const hip = this.joint(`${P}Hip` as JointName, hips, s * 0.085, -0.06, 0, 'XZY');
-    hip.add(new THREE.Mesh(limbGeometry(0.072, 0.045, 0.42, 0.2, 0.006), this.skinMat));
+    hip.add(new THREE.Mesh(skinLimb(THIGH), this.skinMat));
 
     const knee = this.joint(`${P}Knee` as JointName, hip, 0, -0.42, 0);
     knee.add(new THREE.Mesh(new THREE.SphereGeometry(0.045, 16, 12), this.skinMat));
-    knee.add(new THREE.Mesh(limbGeometry(0.044, 0.026, 0.4, 0.28, 0.009), this.skinMat));
+    knee.add(new THREE.Mesh(skinLimb(SHIN), this.skinMat));
 
-    // Sheer thigh-high stockings with gold bands
-    const thighSt = new THREE.Mesh(limbGeometry(0.0625, 0.0475, 0.3, 0, 0, 20, false), this.sheerLegMat);
-    thighSt.position.y = -0.125;
-    hip.add(thighSt);
-    const band = new THREE.Mesh(new THREE.TorusGeometry(0.063, 0.004, 8, 32), this.goldMat);
+    // Sheer thigh-high stockings with gold bands (Casual)
+    const S = { scale: 1.035, add: 0.002 };
+    hip.add(this.addOutfitPart('casual', new THREE.Mesh(sleeveGeometry(THIGH, -0.125, -0.42, S.scale, S.add, 20), this.sheerLegMat)));
+    const band = this.addOutfitPart(
+      'casual',
+      new THREE.Mesh(new THREE.TorusGeometry(sleeveRadius(THIGH, -0.125, S.scale, S.add) + 0.003, 0.004, 8, 32), this.goldMat)
+    );
     band.rotation.x = Math.PI / 2;
     band.position.y = -0.125;
     hip.add(band);
-    const kneeSt = new THREE.Mesh(new THREE.SphereGeometry(0.0475, 16, 12), this.sheerLegMat);
-    knee.add(kneeSt);
-    const shinSt = new THREE.Mesh(limbGeometry(0.0465, 0.0285, 0.4, 0.28, 0.009, 20, false), this.sheerLegMat);
-    knee.add(shinSt);
+    const kneeR = Math.max(THIGH.rBot, SHIN.rTop, 0.045);
+    knee.add(this.addOutfitPart('casual', new THREE.Mesh(new THREE.SphereGeometry(kneeR * S.scale + S.add + 0.0015, 16, 12), this.sheerLegMat)));
+    knee.add(this.addOutfitPart('casual', new THREE.Mesh(sleeveGeometry(SHIN, 0, -0.395, S.scale, S.add, 20), this.sheerLegMat)));
+
+    // Tailored fitted trousers (Formal)
+    const T = { scale: 1.1, add: 0.005 };
+    hip.add(this.addOutfitPart('formal', new THREE.Mesh(sleeveGeometry(THIGH, 0.02, -0.42, T.scale, T.add, 20), this.satinMat)));
+    knee.add(this.addOutfitPart('formal', new THREE.Mesh(new THREE.SphereGeometry(kneeR * T.scale + T.add, 16, 12), this.satinMat)));
+    knee.add(this.addOutfitPart('formal', new THREE.Mesh(sleeveGeometry(SHIN, 0, -0.37, T.scale, T.add, 20), this.satinMat)));
+
+    // Sporty short cuffs + white athletic socks (Sporty)
+    hip.add(this.addOutfitPart('sporty', new THREE.Mesh(sleeveGeometry(THIGH, 0.02, -0.11, 1.1, 0.005, 20), this.satinMat)));
+    knee.add(this.addOutfitPart('sporty', new THREE.Mesh(sleeveGeometry(SHIN, -0.26, -0.4, 1.08, 0.003, 18), this.shirtWhiteMat)));
 
     const ankle = this.joint(`${P}Ankle` as JointName, knee, 0, -0.4, 0);
     ankle.add(new THREE.Mesh(new THREE.SphereGeometry(0.027, 12, 10), this.skinMat));
 
-    // Pointed black pump with gold heel
-    const shoe = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), this.satinMat);
+    // Pointed pump with gold heel
+    const shoe = new THREE.Mesh(new THREE.SphereGeometry(1, 20, 14), this.shoeMat);
     shoe.scale.set(0.034, 0.026, 0.085);
     shoe.position.set(0, -0.032, 0.05);
     shoe.rotation.x = 0.36;
     ankle.add(shoe);
-    const toe = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.05, 14), this.satinMat);
+    const toe = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.05, 14), this.shoeMat);
     toe.rotation.x = Math.PI / 2 + 0.36;
     toe.position.set(0, -0.058, 0.122);
     toe.scale.set(1, 1, 0.6);
@@ -1682,7 +2412,45 @@ export class RiggedAvatar {
     });
   }
 
-  public setPose(pose: PoseName) {
+  /**
+   * Sets the default pose. 'auto' rotates the default pose randomly over time.
+   * With idle cycling on she also occasionally varies it and comes back.
+   */
+  public setPose(pose: PoseName | 'auto') {
+    if (pose === 'auto' && this.autoPose) return; // already rotating: keep the current pose
+    this.holdUntil = 0;
+    if (pose === 'auto') {
+      this.autoPose = true;
+      this.basePose = this.pickAutoPose();
+      this.autoTimer = 14 + Math.random() * 14;
+    } else {
+      this.autoPose = false;
+      this.basePose = pose in POSES ? pose : 'idle';
+    }
+    this.cycleUntil = 0;
+    this.cycleTimer = 8 + Math.random() * 6;
+    this.applyPose(this.basePose);
+  }
+
+  /** Temporary pose (e.g. asked by Hermes): shown for `seconds`, then back to the default behaviour. */
+  public holdPose(pose: PoseName, seconds = 10) {
+    if (!(pose in POSES)) return;
+    this.cycleUntil = 0;
+    this.applyPose(pose);
+    this.holdUntil = seconds > 0 ? this.time + seconds : Infinity;
+  }
+
+  public getDefaultPose(): PoseName | 'auto' {
+    return this.autoPose ? 'auto' : this.basePose;
+  }
+
+  private pickAutoPose(): PoseName {
+    const pool: PoseName[] = ['idle', 'idle', 'idle', 'listening', 'thinking', 'focused', 'happy', 'explaining', 'dancing', 'greeting'];
+    const opts = pool.filter((p) => p !== this.basePose);
+    return opts[Math.floor(Math.random() * opts.length)];
+  }
+
+  private applyPose(pose: PoseName) {
     const def = POSES[pose] ?? POSES.idle;
     this.currentPose = pose in POSES ? pose : 'idle';
     BODY_JOINTS.forEach((n) => this.target[n] && (this.target[n].x = this.target[n].y = this.target[n].z = 0));
@@ -1692,7 +2460,7 @@ export class RiggedAvatar {
   }
 
   public getPose(): PoseName {
-    return this.currentPose;
+    return this.basePose;
   }
 
   // ==========================================================================
@@ -1881,11 +2649,12 @@ export class RiggedAvatar {
 
   /** Inertial force for hair (scene units / s²), e.g. from window acceleration. */
   public setExternalAcceleration(ax: number, ay: number) {
+    if (!Number.isFinite(ax) || !Number.isFinite(ay)) return this.hairExt.set(0, 0, 0) && undefined;
     this.hairExt.set(-ax, -ay, 0).clampLength(0, 40);
   }
 
   public pointAtNormalized(nx: number, ny: number) {
-    this.setPose('pointing');
+    this.holdPose('pointing', 4);
     this.setJointAngles({
       chest: { y: nx * 0.3 },
       head: { y: nx * 0.45, x: -ny * 0.25 },
@@ -1897,6 +2666,16 @@ export class RiggedAvatar {
 
   public updateAppearance(partial: Partial<AppearanceConfig>) {
     this.appearance = { ...this.appearance, ...partial };
+    if (['bodyType', 'bodyHeight', 'bodyWidth', 'shoulderWidth', 'waistSize'].some((k) => (partial as any)[k] !== undefined)) {
+      this.bodyChanged = this.applyBody(this.appearance) || this.bodyChanged;
+    }
+    if (
+      ['faceShape', 'faceRoundness', 'eyeStyle', 'eyeSize', 'noseSize', 'mouthSize', 'hairStyle'].some(
+        (k) => (partial as any)[k] !== undefined
+      )
+    ) {
+      this.applyFaceSettings(this.appearance);
+    }
     if (partial.skinTone) {
       this.skinMat.color.set(partial.skinTone);
       this.faceSkinMat.color.set(partial.skinTone);
@@ -1906,11 +2685,18 @@ export class RiggedAvatar {
       this.hairCapMat.color.set(partial.hairColor).multiplyScalar(0.92);
       this.hairShineMat.color.set(partial.hairColor).lerp(new THREE.Color('#FFF6DA'), 0.55);
     }
-    if (partial.headphoneColor) {
-      this.headphoneBandMat.color.set(partial.headphoneColor);
-      this.headphoneBandMat.emissive.set(partial.headphoneColor).multiplyScalar(0.15);
+    if (partial.headphoneColor || partial.accessoryColor) {
+      const hc = partial.accessoryColor || partial.headphoneColor || '#E6C26E';
+      this.headphoneBandMat.color.set(hc);
+      this.headphoneBandMat.emissive.set(hc).multiplyScalar(0.15);
+    }
+    if (partial.shoeColor) {
+      this.shoeMat.color.set(partial.shoeColor);
     }
     if (partial.outfit) {
+      this.applyOutfitStyle(partial.outfit);
+    }
+    if (partial.outfit || partial.clothingColor || partial.accessoryColor) {
       const p = this.getOutfitPrimaryColor();
       const a = this.getOutfitAccentColor();
       this.satinMat.color.copy(p);
@@ -1951,7 +2737,7 @@ export class RiggedAvatar {
     const T: Partial<Record<JointName, { x: number; y: number; z: number }>> = {};
     const set = (n: JointName, x = 0, y = 0, z = 0) => (T[n] = { x, y, z });
     let hipsDy = 0;
-    let yaw = clamp(L.lookX * 0.35, -0.35, 0.35) + 0.05;
+    let yaw = this.behavior.idleTurn ? clamp(L.lookX * 0.35, -0.35, 0.35) + 0.05 : 0.05;
     const st = L.state;
     const moving = st !== 'idle';
 
@@ -2061,6 +2847,23 @@ export class RiggedAvatar {
     return hipsDy;
   }
 
+  private _q = new THREE.Quaternion();
+  /** Thigh and shin capsules in hips space (for cloth collision). */
+  private legCapsules(): Capsule[] {
+    const out: Capsule[] = [];
+    (['left', 'right'] as Side[]).forEach((sd) => {
+      const hip = this.joints[`${sd}Hip` as JointName];
+      const knee = this.joints[`${sd}Knee` as JointName];
+      const a = hip.position.clone();
+      const kneeP = new THREE.Vector3(0, -THIGH.len * this.legK, 0).applyQuaternion(hip.quaternion).add(a);
+      this._q.copy(hip.quaternion).multiply(knee.quaternion);
+      const ankleP = new THREE.Vector3(0, -SHIN.len * this.legK, 0).applyQuaternion(this._q).add(kneeP);
+      out.push({ a, b: kneeP, r: (THIGH.rTop + THIGH.bulgeAmt + 0.004) * this.limbK });
+      out.push({ a: kneeP, b: ankleP, r: (SHIN.rTop + SHIN.bulgeAmt * 0.5 + 0.004) * this.limbK });
+    });
+    return out;
+  }
+
   private _e = new THREE.Euler();
   private applyJoints(extra: Record<string, { x?: number; y?: number; z?: number }>, dt = 1) {
     ALL_JOINTS.forEach((n) => {
@@ -2116,8 +2919,10 @@ export class RiggedAvatar {
     add('head', 0.008 * breath);
 
     // --- idle weight shift ---
-    add('hips', 0, Math.sin(T * 0.31) * 0.025, Math.sin(T * 0.47) * 0.018);
-    add('spine', 0, 0, -Math.sin(T * 0.47) * 0.014);
+    if (this.behavior.idleMotion) {
+      add('hips', 0, Math.sin(T * 0.31) * 0.025, Math.sin(T * 0.47) * 0.018);
+      add('spine', 0, 0, -Math.sin(T * 0.47) * 0.014);
+    }
 
     // --- gaze: eyes + head follow ---
     this.saccade.timer -= dt;
@@ -2158,14 +2963,36 @@ export class RiggedAvatar {
         add('rightShoulder', 0, 0, Math.sin(T * 6 + Math.PI) * 0.08);
         add('head', 0, 0, Math.sin(T * 3) * 0.05);
         break;
+      case 'dancing': {
+        const b = T * Math.PI * 2 * 1.05; // ~126 bpm
+        add('hips', 0, Math.sin(b * 0.5) * 0.25, Math.sin(b) * 0.09);
+        add('spine', 0, -Math.sin(b * 0.5) * 0.12, -Math.sin(b) * 0.07);
+        add('chest', 0, Math.sin(b * 0.5) * 0.1, 0);
+        add('head', Math.sin(b) * 0.08, 0, Math.sin(b * 0.5) * 0.12);
+        add('leftShoulder', Math.sin(b) * 0.35, 0, Math.sin(b * 0.5) * 0.45);
+        add('rightShoulder', -Math.sin(b) * 0.35, 0, -Math.sin(b * 0.5) * 0.45);
+        add('leftElbow', Math.sin(b + 1) * 0.35);
+        add('rightElbow', Math.sin(b + 2) * 0.35);
+        add('leftKnee', Math.max(0, Math.sin(b)) * 0.35);
+        add('rightKnee', Math.max(0, -Math.sin(b)) * 0.35);
+        add('leftHip', -Math.max(0, Math.sin(b)) * 0.2);
+        add('rightHip', -Math.max(0, -Math.sin(b)) * 0.2);
+        break;
+      }
       case 'idle':
       case 'listening':
-        add('head', 0, Math.sin(T * 0.7) * 0.05, Math.cos(T * 0.5) * 0.025);
+        if (this.behavior.idleMotion) add('head', 0, Math.sin(T * 0.7) * 0.05, Math.cos(T * 0.5) * 0.025);
         break;
     }
-    const bounce = this.currentPose === 'celebrating' || this.currentPose === 'happy' ? Math.abs(Math.sin(T * 6)) * 0.018 : 0;
+    const bounce =
+      this.currentPose === 'celebrating' || this.currentPose === 'happy'
+        ? Math.abs(Math.sin(T * 6)) * 0.018
+        : this.currentPose === 'dancing'
+          ? -Math.abs(Math.sin(T * Math.PI * 2 * 1.05)) * 0.03
+          : 0;
     const locoDy = this.loco.active ? this.computeLocomotion(dt) : 0;
-    this.joints.hips.position.y = 0.93 + bounce + locoDy;
+    this.updateIdleCycle(dt);
+    this.joints.hips.position.y = this.hipsBaseY + bounce + locoDy;
 
     // talking adds small head motion
     if (this.speaking) add('head', Math.sin(T * 5.3) * 0.02, Math.sin(T * 2.7) * 0.03, Math.sin(T * 3.1) * 0.015);
@@ -2247,6 +3074,7 @@ export class RiggedAvatar {
       squint: cf.squint,
       irisColor: this.appearance.eyeColor,
       browColor: '#' + hair.multiplyScalar(0.5).getHexString(),
+      ...this.faceStyle,
     };
     this.face.draw(state);
 
@@ -2255,11 +3083,15 @@ export class RiggedAvatar {
     this.headphoneGlowMat.color.setRGB(1 * glow + 0.2, 0.85 * glow + 0.12, 0.47 * glow);
 
     // --- cloth & hair physics ---
-    this.skirts.forEach((sk, i) => sk.update(T * (1 + i * 0.15), Math.sin(T * 0.6) * 0.01, Math.sin(T * 0.45) * 0.008));
+    const legs = this.legCapsules();
+    this.skirts.forEach((sk, i) => {
+      if (sk.mesh.visible) sk.update(T * (1 + i * 0.15), Math.sin(T * 0.6) * 0.01, Math.sin(T * 0.45) * 0.008, legs);
+    });
     this.root.updateMatrixWorld(true);
     this.refreshCollisionMatrices();
     const colliders: Collider[] = [(p) => this.hairCollide(p, 0.97)];
     this.hair.update(dt, T, colliders, 0.6, 1, this.hairExt);
-    this.sash.update(dt, T, [(p) => this.skirtCollide(p)], 0.7, 1.4, this.hairExt);
+    if (this.sash.mesh.visible) this.sash.update(dt, T, [(p) => this.skirtCollide(p)], 0.7, 1.4, this.hairExt);
+    else this.sash.reset();
   }
 }

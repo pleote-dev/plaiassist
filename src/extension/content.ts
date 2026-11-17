@@ -17,6 +17,8 @@ interface Cfg {
   size: number;
   hideWhenDesktop: boolean;
   disabledHosts: string[];
+  idleRoam: boolean;
+  idleRoamDelay: number;
 }
 const DEFAULTS: Cfg = {
   enabled: true,
@@ -25,6 +27,8 @@ const DEFAULTS: Cfg = {
   size: 240,
   hideWhenDesktop: true,
   disabledHosts: [],
+  idleRoam: false,
+  idleRoamDelay: 60,
 };
 
 const SKIP = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT', 'TEMPLATE', 'BR', 'HEAD', 'META', 'LINK', 'TITLE', 'OPTION']);
@@ -83,6 +87,8 @@ class Overlay {
   private lookOverride: { x: number; y: number; until: number } | null = null;
   private lastStateSent = 0;
   private lastOut: ReturnType<CompanionEngine['update']> | null = null;
+  private lastInput = performance.now();
+  private idleRoaming = false;
 
   async init() {
     this.cfg = { ...DEFAULTS, ...(await chrome.storage.sync.get(DEFAULTS)) };
@@ -93,6 +99,13 @@ class Overlay {
     chrome.runtime.onMessage.addListener((m: any) => this.onBackground(m));
     window.addEventListener('message', (e) => this.onFrameMessage(e));
     addEventListener('mousemove', (e) => this.onMouse(e.clientX, e.clientY), { passive: true, capture: true });
+    const activity = () => {
+      this.lastInput = performance.now();
+      if (this.idleRoaming) this.stopIdleRoam();
+    };
+    ['mousemove', 'mousedown', 'keydown', 'wheel', 'touchstart'].forEach((ev) =>
+      addEventListener(ev, activity, { passive: true, capture: true })
+    );
     addEventListener('scroll', () => this.onScroll(), { passive: true, capture: true });
     addEventListener('resize', () => (this.dirty = true));
     document.addEventListener('selectionchange', () => this.updateCaret());
@@ -118,7 +131,7 @@ class Overlay {
   }
 
   private applyCfg() {
-    this.engine.setSettings({ mode: this.cfg.mode, avoidText: this.cfg.avoidText, enabled: true });
+    this.engine.setSettings({ mode: this.idleRoaming ? 'roam' : this.cfg.mode, avoidText: this.cfg.avoidText, enabled: true });
     if (this.active) {
       if (!this.iframe) this.mount();
       else this.resize();
@@ -148,12 +161,15 @@ class Overlay {
       margin: '0',
       padding: '0',
       background: 'transparent',
-      colorScheme: 'normal',
       zIndex: '2147483646',
       pointerEvents: 'none',
       willChange: 'transform',
       visibility: 'hidden',
     } as Partial<CSSStyleDeclaration>);
+    // Chrome paints an opaque (white) backdrop behind an iframe when the page and the
+    // iframe document use different color schemes (e.g. dark sites). Pin both to "light".
+    f.style.setProperty('color-scheme', 'light', 'important');
+    f.style.setProperty('background', 'transparent', 'important');
     this.iframe = f;
     this.resize();
     (document.body || document.documentElement).appendChild(f);
@@ -163,8 +179,7 @@ class Overlay {
   private unmount() {
     this.iframe?.remove();
     this.iframe = null;
-    this.menu?.remove();
-    this.menu = null;
+    this.closeMenu();
   }
 
   private resize() {
@@ -324,6 +339,19 @@ class Overlay {
     return P;
   }
 
+  // ------------------------------------------------------------------ idle roam
+  private startIdleRoam() {
+    if (this.idleRoaming) return;
+    this.idleRoaming = true;
+    this.engine.setSettings({ mode: 'roam', enabled: true });
+  }
+
+  private stopIdleRoam() {
+    if (!this.idleRoaming) return;
+    this.idleRoaming = false;
+    this.engine.setSettings({ mode: this.cfg.mode, enabled: true }); // back to the configured behaviour
+  }
+
   // ------------------------------------------------------------------ loop
   private loop() {
     if (!this.running || !this.iframe) return;
@@ -331,6 +359,9 @@ class Overlay {
     const now = performance.now();
     const dt = Math.min(0.05, (now - this.lastT) / 1000);
     this.lastT = now;
+    if (this.cfg.idleRoam && !this.idleRoaming && !this.grabbing && now - this.lastInput > this.cfg.idleRoamDelay * 1000)
+      this.startIdleRoam();
+    else if (!this.cfg.idleRoam && this.idleRoaming) this.stopIdleRoam();
     this.scan();
 
     const out = this.engine.update({
@@ -371,6 +402,7 @@ class Overlay {
         cursor: this.cursor,
         surfaces: this.surfaces.length,
         screen: { x: 0, y: 0, w: innerWidth, h: innerHeight },
+        idleRoaming: this.idleRoaming,
       });
     }
   }
@@ -459,6 +491,8 @@ class Overlay {
         if (c.avoidText !== undefined) patch.avoidText = !!c.avoidText;
         if (c.enabled !== undefined) patch.mode = c.enabled ? this.cfg.mode === 'stay' ? 'follow' : this.cfg.mode : 'stay';
         if (c.height) patch.size = Number(c.height);
+        if (c.idleRoam !== undefined) patch.idleRoam = !!c.idleRoam;
+        if (c.idleRoamDelay !== undefined) patch.idleRoamDelay = Math.max(5, Number(c.idleRoamDelay) || 60);
         const eng: Partial<CompanionSettings> = {};
         ['followDistance', 'walkSpeed', 'runSpeed'].forEach((k) => c[k] !== undefined && ((eng as any)[k] = Number(c[k])));
         this.engine.setSettings(eng);
@@ -511,8 +545,15 @@ class Overlay {
     }
   }
 
+  private closeMenu() {
+    this.menu?.remove();
+    this.menu = null;
+    this.engine.setPaused(false);
+  }
+
   private showMenu() {
     this.menu?.remove();
+    this.engine.setPaused(true); // stay put while the menu is open (no chasing the menu)
     const host = document.createElement('div');
     const sh = host.attachShadow({ mode: 'closed' });
     const b = this.lastOut?.body ?? { x: this.cursor.x, y: this.cursor.y, w: 0, h: 0 };
@@ -547,17 +588,29 @@ class Overlay {
       )}<hr>${item('Saltar', () => {})}${item('Esconder nesta página', () => {})}${item('Esconder em todo o lado', () => {})}</div>`;
     sh.querySelectorAll('button').forEach((btn) =>
       btn.addEventListener('click', () => {
+        removeEventListener('mousedown', close, true);
+        removeEventListener('keydown', esc, true);
+        this.closeMenu();
         actions[(btn as HTMLElement).dataset.k!]?.();
-        host.remove();
       })
     );
     const close = (e: MouseEvent) => {
       if (!e.composedPath().includes(host)) {
-        host.remove();
         removeEventListener('mousedown', close, true);
+        removeEventListener('keydown', esc, true);
+        if (this.menu === host) this.closeMenu();
       }
     };
-    setTimeout(() => addEventListener('mousedown', close, true), 0);
+    const esc = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      removeEventListener('mousedown', close, true);
+      removeEventListener('keydown', esc, true);
+      if (this.menu === host) this.closeMenu();
+    };
+    setTimeout(() => {
+      addEventListener('mousedown', close, true);
+      addEventListener('keydown', esc, true);
+    }, 0);
     document.documentElement.appendChild(host);
     this.menu = host;
   }

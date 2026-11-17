@@ -17,6 +17,7 @@
     "dev:config": "vite --config vite.config.config.mts",
     "dev:app": "concurrently \"npm run dev:mcp\" \"npm run dev:avatar\" \"npm run dev:config\" \"wait-on http://localhost:3001 && electron .\"",
     "build": "npm run build:mcp && npm run build:main && npm run build:avatar && npm run build:config && npm run build:extension",
+    "build:vm": "npm run build:mcp && npm run build:avatar",
     "build:mcp": "tsc -p tsconfig.mcp.json",
     "build:avatar": "vite build --config vite.config.mts",
     "build:config": "vite build --config vite.config.config.mts",
@@ -46,7 +47,6 @@
     "@modelcontextprotocol/sdk": "^0.4.0",
     "@types/three": "^0.158.0",
     "express": "^4.18.2",
-    "robotjs": "^0.6.0",
     "say": "^0.16.0",
     "three": "^0.158.0",
     "ws": "^8.14.2"
@@ -148,7 +148,8 @@
       "provider": "github",
       "owner": "avatar-assistant",
       "repo": "avatar-assistant"
-    }
+    },
+    "npmRebuild": false
   },
   "keywords": [
     "mcp",
@@ -158,5 +159,8 @@
     "desktop",
     "electron",
     "ai"
-  ]
+  ],
+  "optionalDependencies": {
+    "robotjs": "^0.6.0"
+  }
 }

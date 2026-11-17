@@ -12,6 +12,9 @@ contextBridge.exposeInMainWorld('configAPI', {
   
   // Service status
   getServiceStatus: () => ipcRenderer.invoke('get-service-status'),
+  testHermes: (url: string) => ipcRenderer.invoke('test-hermes', url),
+  resetConfig: () => ipcRenderer.invoke('reset-config'),
+  clearCache: () => ipcRenderer.invoke('clear-cache'),
   
   // Avatar control from config
   updateAvatarAppearance: (appearance: any) => ipcRenderer.invoke('update-avatar-appearance', appearance),
@@ -35,7 +38,10 @@ declare global {
       applyConfig: (config: any) => Promise<void>;
       getConfig: () => Promise<any>;
       testVoice: (text: string, voiceConfig: any) => Promise<void>;
-      getServiceStatus: () => Promise<{ running: boolean; status: string }>;
+      getServiceStatus: () => Promise<any>;
+      testHermes: (url: string) => Promise<{ ok: boolean; url: string; message: string }>;
+      resetConfig: () => Promise<any>;
+      clearCache: () => Promise<boolean>;
       updateAvatarAppearance: (appearance: any) => Promise<void>;
       updateAvatarBehavior: (behavior: any) => Promise<void>;
       onConfigUpdate: (callback: (config: any) => void) => void;

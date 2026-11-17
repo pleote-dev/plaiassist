@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="light" />
   <title>Hermes Visual Avatar</title>
   <style>
     * {
@@ -11,14 +12,21 @@
       box-sizing: border-box;
     }
 
+    :root,
     html {
-      background: transparent;
+      color-scheme: light;
+      background: transparent !important;
     }
 
     body.mode-companion .status,
     body.mode-companion .hud-controls,
     body.mode-web .status,
     body.mode-web .hud-controls {
+      display: none !important;
+    }
+
+    body.embed .status,
+    body.embed .hud-controls {
       display: none !important;
     }
 

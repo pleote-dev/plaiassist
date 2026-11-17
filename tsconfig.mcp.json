@@ -6,6 +6,15 @@
     "outDir": "./dist",
     "rootDir": "./src"
   },
-  "include": ["src/mcp-server.ts", "src/desktop-window.ts", "src/preload.ts"],
-  "exclude": ["src/avatar", "node_modules", "dist"]
+  "include": [
+    "src/mcp-server.ts",
+    "src/desktop-window.ts",
+    "src/preload.ts",
+    "src/types/*.d.ts"
+  ],
+  "exclude": [
+    "src/avatar",
+    "node_modules",
+    "dist"
+  ]
 }

@@ -153,6 +153,7 @@ export class CompanionEngine {
   private roamTimer = 4;
   private time = 0;
   private grabOffset = { x: 0, y: 0 };
+  private paused = false;
   private lastInput: WorldInput | null = null;
 
   constructor(settings?: Partial<CompanionSettings>) {
@@ -165,8 +166,29 @@ export class CompanionEngine {
     if (s.mode || s.enabled !== undefined) this.plan = [];
   }
 
+  /**
+   * Freeze her in place (e.g. while her context menu is open), so the menu is not a chase.
+   * A jump already in the air is finished; walking stops at once.
+   */
+  setPaused(on: boolean) {
+    this.paused = on;
+    if (on) {
+      const airborne = !['idle', 'walk', 'run', 'land', 'prejump'].includes(this.state);
+      this.plan = airborne && this.plan[0]?.type === 'hop' ? [this.plan[0]] : [];
+      this.goal = null;
+      this.manualTarget = null;
+      this.vel.x = airborne ? this.vel.x : 0;
+    } else {
+      this.goalTimer = 0.6; // small grace before she starts moving again
+    }
+  }
+
+  isPaused() {
+    return this.paused;
+  }
+
   setMetrics(bodyW: number, bodyH: number) {
-    if (bodyW > 10 && bodyH > 10) {
+    if (Number.isFinite(bodyW) && Number.isFinite(bodyH) && bodyW > 10 && bodyH > 10) {
       this.bodyW = bodyW;
       this.bodyH = bodyH;
     }
@@ -174,6 +196,10 @@ export class CompanionEngine {
 
   /** Place her somewhere (she will fall to the nearest surface below). */
   dropIn(x: number, y: number) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      x = Number.isFinite(x) ? x : this.lastInput ? this.lastInput.bounds.x + this.lastInput.bounds.w / 2 : 200;
+      y = Number.isFinite(y) ? y : this.lastInput ? this.lastInput.bounds.y + this.bodyH : 300;
+    }
     this.pos = { x, y };
     this.prev = { x, y };
     this.vel = { x: 0, y: 0 };
@@ -474,7 +500,12 @@ export class CompanionEngine {
 
   // ------------------------------------------------------------------ update
   update(inp: WorldInput): CompanionOutput {
-    const dt = clamp(inp.dt, 0, 0.05);
+    const dt = clamp(Number.isFinite(inp.dt) ? inp.dt : 0, 0, 0.05);
+    // self-heal: any invalid number (bad metrics, bad command) puts her back on screen
+    if (!Number.isFinite(this.pos.x) || !Number.isFinite(this.pos.y) || !Number.isFinite(this.vel.x) || !Number.isFinite(this.vel.y)) {
+      const B = inp.bounds;
+      this.dropIn(B.x + B.w / 2, B.y + this.bodyH);
+    }
     this.time += dt;
     this.stateTime += dt;
     this.lastInput = inp;
@@ -628,6 +659,7 @@ export class CompanionEngine {
   /** Decide whether to pick a new destination. */
   private think(inp: WorldInput) {
     const S = this.settings;
+    if (this.paused) return;
     this.goalTimer -= inp.dt;
     if (this.goalTimer > 0) return;
     this.goalTimer = 0.4;
@@ -703,7 +735,8 @@ export class CompanionEngine {
         if (p.type === 'walk') return acc + Math.abs(p.x - (i === 0 ? this.pos.x : p.x));
         return acc + 150;
       }, 0);
-      const run = remaining > 520 || this.settings.mode === 'follow' && Math.abs(dx) > 420;
+      // strolling (roam) walks; following runs when far away
+      const run = this.settings.mode === 'roam' ? remaining > 1400 : remaining > 520 || Math.abs(dx) > 420;
       const v = run ? this.settings.runSpeed : this.settings.walkSpeed;
       // accelerate gently
       const curV = Math.min(v, Math.abs(this.vel.x) + v * 4 * dt + 20);

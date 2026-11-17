@@ -36,7 +36,10 @@ She can appear in three places, all driven by the same tools:
 - Emotions: `neutral happy excited thinking curious surprised sad concerned confident playful wink`.
 
 ### Body
-- `set_avatar_pose` `{ pose }` — `idle pointing waving thinking happy explaining listening shrugging nodding shaking_head greeting celebrating focused`.
+- `set_avatar_pose` `{ pose, holdSeconds?, default? }` — `idle pointing waving thinking happy explaining listening shrugging nodding shaking_head greeting celebrating focused dancing`, or `auto`.
+  Your poses are **temporary**: shown for `holdSeconds` (default ~12 s; `express`/`say` keep it while talking + 3 s), then she
+  returns to the default pose the user configured. Only change the default when the user asks: `default: true` (or
+  `holdSeconds: 0`). `pose: "auto"` makes her rotate between poses randomly on her own.
 - `set_hand_gesture` `{ side: left|right|both, gesture: relaxed|open|fist|point|peace|thumbsUp }`.
 - `set_joint_angles` `{ angles }` — full skeleton incl. clavicles, ankles and 3 phalanges per finger
   (e.g. `rightIndex1`). `left/right` = her own side. x = flexion (shoulder/hip negative = forward; elbow negative =
@@ -44,7 +47,9 @@ She can appear in three places, all driven by the same tools:
   Values are clamped to natural limits.
 
 ### Moving on screen (companion)
-- `companion_mode` `{ enabled?, mode?: follow|roam|stay, avoidText?, followDistance?, walkSpeed?, runSpeed?, size? }`
+- `companion_mode` `{ enabled?, mode?: follow|roam|stay, avoidText?, followDistance?, walkSpeed?, runSpeed?, size?, idleRoam?, idleRoamDelay? }`
+  — `idleRoam: true` makes her stroll around the screen (changing poses) after `idleRoamDelay` seconds (default 60) without
+  keyboard/mouse activity; as soon as the user is back she returns to the configured mode.
 - `walk_to` `{ x, y }` or `{ target: cursor|left|right|center|top|bottom, holdSeconds? }` — she plans a route
   walking, jumping, climbing or dropping between surfaces, then resumes following after `holdSeconds`.
 - `jump` `{ direction: up|down|left|right }`, `teleport` `{ x?, y? }` (drops in from above).

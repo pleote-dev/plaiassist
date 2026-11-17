@@ -35,6 +35,8 @@ contextBridge.exposeInMainWorld('api', {
     },
   },
   getRuntimeConfig: () => ipcRenderer.invoke('get-runtime-config'),
+  /** avatar window → main: state of the WebSocket to the Hermes server */
+  wsState: (st: any) => ipcRenderer.send('avatar-ws-state', st),
 
   // Avatar control functions
   showAvatar: () => ipcRenderer.invoke('show-avatar'),

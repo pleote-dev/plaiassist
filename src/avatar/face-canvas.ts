@@ -26,6 +26,13 @@ export interface FaceDrawState {
   squint: number; // -1..1 (lower lid raise)
   irisColor: string;
   browColor: string;
+  // face style (config "Face" tab)
+  eyeW?: number; // half width (m)
+  eyeH?: number; // half height (m)
+  eyeTilt?: number; // outer-corner lift factor
+  wing?: number; // eyeliner wing length factor
+  noseScale?: number;
+  mouthScale?: number;
 }
 
 export const EYE = { x: 0.044, y: -0.018, w: 0.0215, h: 0.026 };
@@ -74,8 +81,8 @@ export class FaceCanvas {
     c.lineJoin = 'round';
 
     this.drawBlush(s);
-    this.drawNose();
-    this.drawMouth(s);
+    this.withScale(0.002, -0.052, s.noseScale ?? 1, () => this.drawNose());
+    this.withScale(0, -0.087, s.mouthScale ?? 1, () => this.drawMouth(s));
     this.drawEye(-1, s.rightOpen, s);
     this.drawEye(1, s.leftOpen, s);
     this.drawBrow(-1, s);
@@ -85,8 +92,12 @@ export class FaceCanvas {
   }
 
   // ---------------------------------------------------------------- eyes
+  private dims(s: FaceDrawState) {
+    return { w: s.eyeW ?? EYE.w, h: s.eyeH ?? EYE.h, tiltK: s.eyeTilt ?? 0.14, wing: s.wing ?? 1 };
+  }
+
   private eyeCurves(sgn: number, open: number, s: FaceDrawState) {
-    const { w, h } = EYE;
+    const { w, h, tiltK } = this.dims(s);
     const ex = sgn * EYE.x;
     const ey = EYE.y;
     const n = 28;
@@ -98,7 +109,7 @@ export class FaceCanvas {
     for (let i = 0; i <= n; i++) {
       const u = -1 + (2 * i) / n;
       const uu = 1 - u * u;
-      const tilt = 0.14 * u * h; // outer corner slightly higher (cat-eye)
+      const tilt = tiltK * u * h; // outer corner slightly higher (cat-eye)
       const openTop = ey + h * 0.95 * Math.pow(uu, 0.5) * (1 - Math.max(0, sq) * 0.12) + tilt;
       const openBot = ey - h * 0.8 * Math.pow(uu, 0.8) + tilt + sq * 0.32 * h * uu;
       const closedL = ey - h * 0.2 * uu + tilt;
@@ -113,7 +124,7 @@ export class FaceCanvas {
 
   private drawEye(sgn: number, open: number, s: FaceDrawState) {
     const c = this.ctx;
-    const { w, h } = EYE;
+    const { w, h, wing: wingK } = this.dims(s);
     const { top, bot, o, ex, ey } = this.eyeCurves(sgn, open, s);
 
     if (o > 0.06) {
@@ -224,7 +235,7 @@ export class FaceCanvas {
       return u >= -0.95;
     });
     const end = top[top.length - 1];
-    const wing: P = [ex + sgn * w * 1.34, end[1] + h * (0.12 + 0.2 * Math.max(o, 0.25))];
+    const wing: P = [ex + sgn * w * (1 + 0.34 * wingK), end[1] + h * (0.12 + 0.2 * Math.max(o, 0.25)) * wingK];
     c.fillStyle = '#100A08';
     c.beginPath();
     pts.forEach(([x, y], i) => (i ? c.lineTo(this.px(x), this.py(y - 0.0004)) : c.moveTo(this.px(x), this.py(y - 0.0004))));
@@ -257,7 +268,7 @@ export class FaceCanvas {
 
   private drawBrow(sgn: number, s: FaceDrawState) {
     const c = this.ctx;
-    const { w, h } = EYE;
+    const { w, h } = this.dims(s);
     const ex = sgn * EYE.x;
     const base =
       EYE.y + h + 0.012 + s.browRaise * 0.0065 + sgn * s.browAsym * 0.004 - Math.max(0, s.squint) * 0.002;
@@ -281,6 +292,17 @@ export class FaceCanvas {
     for (let i = lower.length - 1; i >= 0; i--) c.lineTo(this.px(lower[i][0]), this.py(lower[i][1]));
     c.closePath();
     c.fill();
+  }
+
+  /** Draw with a uniform scale around a face point (metres). */
+  private withScale(x: number, y: number, k: number, fn: () => void) {
+    const c = this.ctx;
+    c.save();
+    c.translate(this.px(x), this.py(y));
+    c.scale(k, k);
+    c.translate(-this.px(x), -this.py(y));
+    fn();
+    c.restore();
   }
 
   // ---------------------------------------------------------------- nose
