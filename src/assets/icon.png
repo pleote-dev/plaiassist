@@ -1,0 +1,3 @@
+# Placeholder for icon
+# This would be a 512x512 PNG icon for Linux builds
+# For now, we'll remove this requirement from the package.json

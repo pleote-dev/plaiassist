@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "outDir": "./dist",
+    "rootDir": "./src",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "src/desktop-window.ts",
+    "src/tray-manager.ts",
+    "src/preload.ts",
+    "src/config-preload.ts",
+    "src/companion/engine.ts",
+    "src/companion/surface-analysis.ts",
+    "src/companion/desktop-controller.ts"
+  ],
+  "exclude": ["src/avatar", "src/config", "src/mcp-server.ts", "node_modules", "dist"]
+}

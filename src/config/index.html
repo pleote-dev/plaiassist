@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avatar Assistant Configuration</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #4169E1 0%, #FF69B4 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            font-weight: 300;
+        }
+
+        .header p {
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+
+        .tabs {
+            display: flex;
+            background: #f8f9fa;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            border: none;
+            background: none;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .tab:hover {
+            background: #e9ecef;
+        }
+
+        .tab.active {
+            background: white;
+            color: #4169E1;
+            font-weight: 600;
+        }
+
+        .tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 3px;
+            background: #4169E1;
+        }
+
+        .content {
+            padding: 30px;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section h2 {
+            color: #4169E1;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+            border-bottom: 2px solid #4169E1;
+            padding-bottom: 10px;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #555;
+        }
+
+        .form-group input,
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus,
+        .form-group textarea:focus {
+            outline: none;
+            border-color: #4169E1;
+        }
+
+        .color-input {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .color-input input[type="color"] {
+            width: 60px;
+            height: 40px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .color-input input[type="text"] {
+            flex: 1;
+        }
+
+        .pose-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .pose-card {
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .pose-card:hover {
+            border-color: #4169E1;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(65, 105, 225, 0.2);
+        }
+
+        .pose-card.selected {
+            border-color: #4169E1;
+            background: linear-gradient(135deg, #4169E1 0%, #FF69B4 100%);
+            color: white;
+        }
+
+        .pose-icon {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .outfit-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .outfit-card {
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .outfit-card:hover {
+            border-color: #4169E1;
+            transform: translateY(-2px);
+        }
+
+        .outfit-card.selected {
+            border-color: #4169E1;
+            background: #f8f9ff;
+        }
+
+        .outfit-preview {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 10px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+        }
+
+        .body-type-grid, .face-shape-grid, .eye-style-grid, .hair-style-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+            gap: 15px;
+            margin-top: 15px;
+        }
+
+        .body-type-card, .face-shape-card, .eye-style-card, .hair-style-card {
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .body-type-card:hover, .face-shape-card:hover, .eye-style-card:hover, .hair-style-card:hover {
+            border-color: #4169E1;
+            transform: translateY(-2px);
+        }
+
+        .body-type-card.selected, .face-shape-card.selected, .eye-style-card.selected, .hair-style-card.selected {
+            border-color: #4169E1;
+            background: linear-gradient(135deg, #4169E1 0%, #FF69B4 100%);
+            color: white;
+        }
+
+        .body-preview, .face-preview, .eye-preview, .hair-preview {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-right: 10px;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #4169E1 0%, #FF69B4 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(65, 105, 225, 0.3);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+        }
+
+        .status-indicator {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .status-indicator.online {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-indicator.offline {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .slider-group {
+            margin-bottom: 20px;
+        }
+
+        .slider-group input[type="range"] {
+            width: 100%;
+            margin: 10px 0;
+        }
+
+        .slider-value {
+            text-align: center;
+            font-weight: 600;
+            color: #4169E1;
+        }
+
+        .actions {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+        }
+
+        .notification {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 15px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 1000;
+            animation: slideIn 0.3s ease;
+        }
+
+        .notification.success {
+            background: #28a745;
+        }
+
+        .notification.error {
+            background: #dc3545;
+        }
+
+        .notification.info {
+            background: #17a2b8;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>👧 Avatar Assistant Configuration</h1>
+            <p>Customize your AI avatar assistant appearance and behavior</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('appearance')">Appearance</button>
+            <button class="tab" onclick="switchTab('body')">Body</button>
+            <button class="tab" onclick="switchTab('face')">Face</button>
+            <button class="tab" onclick="switchTab('clothing')">Clothing</button>
+            <button class="tab" onclick="switchTab('behavior')">Behavior</button>
+            <button class="tab" onclick="switchTab('voice')">Voice</button>
+            <button class="tab" onclick="switchTab('advanced')">Advanced</button>
+        </div>
+
+        <div class="content">
+            <!-- Appearance Tab -->
+            <div id="appearance" class="tab-content active">
+                <div class="section">
+                    <h2>Basic Colors</h2>
+                    
+                    <div class="form-group">
+                        <label>Hair Color</label>
+                        <div class="color-input">
+                            <input type="color" id="hairColor" value="#8B4513">
+                            <input type="text" id="hairColorText" value="#8B4513" placeholder="#8B4513">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Eye Color</label>
+                        <div class="color-input">
+                            <input type="color" id="eyeColor" value="#4169E1">
+                            <input type="text" id="eyeColorText" value="#4169E1" placeholder="#4169E1">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Skin Tone</label>
+                        <div class="color-input">
+                            <input type="color" id="skinTone" value="#FDBCB4">
+                            <input type="text" id="skinToneText" value="#FDBCB4" placeholder="#FDBCB4">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Default Pose</h2>
+                    <div class="pose-grid">
+                        <div class="pose-card selected" data-pose="idle">
+                            <div class="pose-icon">🧍</div>
+                            <div>Idle</div>
+                        </div>
+                        <div class="pose-card" data-pose="pointing">
+                            <div class="pose-icon">👉</div>
+                            <div>Pointing</div>
+                        </div>
+                        <div class="pose-card" data-pose="waving">
+                            <div class="pose-icon">👋</div>
+                            <div>Waving</div>
+                        </div>
+                        <div class="pose-card" data-pose="thinking">
+                            <div class="pose-icon">🤔</div>
+                            <div>Thinking</div>
+                        </div>
+                        <div class="pose-card" data-pose="happy">
+                            <div class="pose-icon">😊</div>
+                            <div>Happy</div>
+                        </div>
+                        <div class="pose-card" data-pose="dancing">
+                            <div class="pose-icon">🕺</div>
+                            <div>Dancing</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Avatar Size</h2>
+                    <div class="slider-group">
+                        <label>Size: <span class="slider-value" id="sizeValue">150</span>px</label>
+                        <input type="range" id="avatarSize" min="50" max="300" value="150">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Body Tab -->
+            <div id="body" class="tab-content">
+                <div class="section">
+                    <h2>Body Type</h2>
+                    <div class="body-type-grid">
+                        <div class="body-type-card selected" data-body-type="average">
+                            <div class="body-preview">👤</div>
+                            <div>Average</div>
+                        </div>
+                        <div class="body-type-card" data-body-type="athletic">
+                            <div class="body-preview">💪</div>
+                            <div>Athletic</div>
+                        </div>
+                        <div class="body-type-card" data-body-type="slim">
+                            <div class="body-preview">🚶</div>
+                            <div>Slim</div>
+                        </div>
+                        <div class="body-type-card" data-body-type="curvy">
+                            <div class="body-preview">👩</div>
+                            <div>Curvy</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Body Proportions</h2>
+                    
+                    <div class="slider-group">
+                        <label>Height: <span class="slider-value" id="bodyHeightValue">150</span>px</label>
+                        <input type="range" id="bodyHeight" min="100" max="200" value="150">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Width: <span class="slider-value" id="bodyWidthValue">100</span>px</label>
+                        <input type="range" id="bodyWidth" min="50" max="150" value="100">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Shoulder Width: <span class="slider-value" id="shoulderWidthValue">100</span>%</label>
+                        <input type="range" id="shoulderWidth" min="50" max="150" value="100">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Waist Size: <span class="slider-value" id="waistSizeValue">80</span>%</label>
+                        <input type="range" id="waistSize" min="50" max="120" value="80">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Face Tab -->
+            <div id="face" class="tab-content">
+                <div class="section">
+                    <h2>Face Shape</h2>
+                    <div class="face-shape-grid">
+                        <div class="face-shape-card selected" data-face-shape="oval">
+                            <div class="face-preview">🙂</div>
+                            <div>Oval</div>
+                        </div>
+                        <div class="face-shape-card" data-face-shape="round">
+                            <div class="face-preview">😊</div>
+                            <div>Round</div>
+                        </div>
+                        <div class="face-shape-card" data-face-shape="square">
+                            <div class="face-preview">😐</div>
+                            <div>Square</div>
+                        </div>
+                        <div class="face-shape-card" data-face-shape="heart">
+                            <div class="face-preview">🥰</div>
+                            <div>Heart</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Eye Style</h2>
+                    <div class="eye-style-grid">
+                        <div class="eye-style-card selected" data-eye-style="normal">
+                            <div class="eye-preview">👀</div>
+                            <div>Normal</div>
+                        </div>
+                        <div class="eye-style-card" data-eye-style="large">
+                            <div class="eye-preview">👁️</div>
+                            <div>Large</div>
+                        </div>
+                        <div class="eye-style-card" data-eye-style="almond">
+                            <div class="eye-preview">👀</div>
+                            <div>Almond</div>
+                        </div>
+                        <div class="eye-style-card" data-eye-style="cat">
+                            <div class="eye-preview">😼</div>
+                            <div>Cat Eyes</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Hair Style</h2>
+                    <div class="hair-style-grid">
+                        <div class="hair-style-card selected" data-hair-style="short">
+                            <div class="hair-preview">💇‍♂️</div>
+                            <div>Short</div>
+                        </div>
+                        <div class="hair-style-card" data-hair-style="long">
+                            <div class="hair-preview">💇‍♀️</div>
+                            <div>Long</div>
+                        </div>
+                        <div class="hair-style-card" data-hair-style="curly">
+                            <div class="hair-preview">🦱</div>
+                            <div>Curly</div>
+                        </div>
+                        <div class="hair-style-card" data-hair-style="ponytail">
+                            <div class="hair-preview">🎀</div>
+                            <div>Ponytail</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Facial Features</h2>
+                    
+                    <div class="slider-group">
+                        <label>Eye Size: <span class="slider-value" id="eyeSizeValue">50</span>%</label>
+                        <input type="range" id="eyeSize" min="20" max="100" value="50">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Nose Size: <span class="slider-value" id="noseSizeValue">50</span>%</label>
+                        <input type="range" id="noseSize" min="20" max="100" value="50">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Mouth Size: <span class="slider-value" id="mouthSizeValue">50</span>%</label>
+                        <input type="range" id="mouthSize" min="20" max="100" value="50">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Face Roundness: <span class="slider-value" id="faceRoundnessValue">50</span>%</label>
+                        <input type="range" id="faceRoundness" min="0" max="100" value="50">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Clothing Tab -->
+            <div id="clothing" class="tab-content">
+                <div class="section">
+                    <h2>Clothing Style</h2>
+                    <div class="outfit-grid">
+                        <div class="outfit-card selected" data-outfit="casual">
+                            <div class="outfit-preview" style="background: #4169E1;">👕</div>
+                            <div>Casual</div>
+                        </div>
+                        <div class="outfit-card" data-outfit="formal">
+                            <div class="outfit-preview" style="background: #000000;">👔</div>
+                            <div>Formal</div>
+                        </div>
+                        <div class="outfit-card" data-outfit="sporty">
+                            <div class="outfit-preview" style="background: #FF6347;">🏃</div>
+                            <div>Sporty</div>
+                        </div>
+                        <div class="outfit-card" data-outfit="elegant">
+                            <div class="outfit-preview" style="background: #8B4513;">👗</div>
+                            <div>Elegant</div>
+                        </div>
+                        <div class="outfit-card" data-outfit="cyberpunk">
+                            <div class="outfit-preview" style="background: #FF00FF;">🤖</div>
+                            <div>Cyberpunk</div>
+                        </div>
+                        <div class="outfit-card" data-outfit="fantasy">
+                            <div class="outfit-preview" style="background: #9932CC;">🧙</div>
+                            <div>Fantasy</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Clothing Colors</h2>
+                    
+                    <div class="form-group">
+                        <label>Main Clothing Color</label>
+                        <div class="color-input">
+                            <input type="color" id="clothingColor" value="#4169E1">
+                            <input type="text" id="clothingColorText" value="#4169E1" placeholder="#4169E1">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Shoe Color</label>
+                        <div class="color-input">
+                            <input type="color" id="shoeColor" value="#333333">
+                            <input type="text" id="shoeColorText" value="#333333" placeholder="#333333">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Accessory Color</label>
+                        <div class="color-input">
+                            <input type="color" id="accessoryColor" value="#FFD700">
+                            <input type="text" id="accessoryColorText" value="#FFD700" placeholder="#FFD700">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Behavior Tab -->
+            <div id="behavior" class="tab-content">
+                <div class="section">
+                    <h2>Window Behavior</h2>
+                    
+                    <div class="form-group">
+                        <label>Initial Position</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+                            <input type="number" id="posX" value="100" placeholder="X">
+                            <input type="number" id="posY" value="100" placeholder="Y">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="alwaysOnTop" checked>
+                            Always on top
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="clickThrough" checked>
+                            Click through when not interacting
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="autoHide" >
+                            Auto-hide when not active
+                        </label>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Animation Settings</h2>
+                    
+                    <div class="slider-group">
+                        <label>Animation Speed: <span class="slider-value" id="animSpeedValue">1.0</span>x</label>
+                        <input type="range" id="animSpeed" min="0.1" max="3" step="0.1" value="1">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="floatingAnim" checked>
+                            Enable floating animation
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="idleRotation" checked>
+                            Enable idle rotation
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Voice Tab -->
+            <div id="voice" class="tab-content">
+                <div class="section">
+                    <h2>Voice Settings</h2>
+                    
+                    <div class="form-group">
+                        <label>Voice Engine</label>
+                        <select id="voiceEngine">
+                            <option value="system">System Default</option>
+                            <option value="samantha">Samantha (macOS)</option>
+                            <option value="alex">Alex (macOS)</option>
+                            <option value="victoria">Victoria (macOS)</option>
+                            <option value="zira">Zira (Windows)</option>
+                            <option value="david">David (Windows)</option>
+                        </select>
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Speech Rate: <span class="slider-value" id="speechRateValue">1.0</span>x</label>
+                        <input type="range" id="speechRate" min="0.5" max="2" step="0.1" value="1">
+                    </div>
+
+                    <div class="slider-group">
+                        <label>Volume: <span class="slider-value" id="volumeValue">100</span>%</label>
+                        <input type="range" id="volume" min="0" max="100" value="100">
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="voiceEnabled" checked>
+                            Enable voice output
+                        </label>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="voiceInput">
+                            Enable voice input (experimental)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Test Voice</h2>
+                    <button class="btn btn-primary" onclick="testVoice()">Test Speech</button>
+                    <textarea id="testText" rows="3" placeholder="Enter text to speak..." style="width: 100%; margin-top: 10px;">Hello! I'm your avatar assistant.</textarea>
+                </div>
+            </div>
+
+            <!-- Advanced Tab -->
+            <div id="advanced" class="tab-content">
+                <div class="section">
+                    <h2>Service Status</h2>
+                    <div class="status-indicator online" id="serviceStatus">
+                        <span class="status-dot"></span>
+                        <span>Service Running</span>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>MCP Configuration</h2>
+                    
+                    <div class="form-group">
+                        <label>Server Port</label>
+                        <input type="number" id="serverPort" value="8080">
+                    </div>
+
+                    <div class="form-group">
+                        <label>Log Level</label>
+                        <select id="logLevel">
+                            <option value="error">Error</option>
+                            <option value="warn">Warning</option>
+                            <option value="info" selected>Info</option>
+                            <option value="debug">Debug</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" id="enableDebug">
+                            Enable debug mode
+                        </label>
+                    </div>
+                </div>
+
+                <div class="section">
+                    <h2>Reset Options</h2>
+                    <button class="btn btn-secondary" onclick="resetSettings()">Reset to Defaults</button>
+                    <button class="btn btn-secondary" onclick="clearCache()">Clear Cache</button>
+                </div>
+            </div>
+
+            <div class="actions">
+                <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                <button class="btn btn-secondary" onclick="applySettings()">Apply Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module" src="./working.js"></script>
+</body>
+</html>

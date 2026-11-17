@@ -1,0 +1,3 @@
+# Placeholder for DMG background
+# This would be a 600x400 PNG image for the DMG installer background
+# For now, we'll remove this requirement from the package.json

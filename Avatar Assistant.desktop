@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Avatar Assistant
+Comment=Interactive AI assistant with customizable avatar
+Exec=/usr/bin/open -a Terminal /Users/pleote/Documents/src/plaiassist
+Icon=/Users/pleote/Documents/src/plaiassist/assets/icon.png
+Terminal=false
+Categories=Utility;Development;
+Keywords=AI;assistant;avatar;MCP;

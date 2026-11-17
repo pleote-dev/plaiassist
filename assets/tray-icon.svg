@@ -1,0 +1,25 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Background -->
+  <circle cx="16" cy="16" r="14" fill="#4169E1" stroke="#2C3E50" stroke-width="2"/>
+  
+  <!-- Simple avatar head -->
+  <circle cx="16" cy="12" r="6" fill="#FDBCB4"/>
+  
+  <!-- Simple hair -->
+  <path d="M10 8 Q10 6 16 6 Q22 6 22 8 Q22 10 20 11 L12 11 Q10 10 10 8Z" fill="#8B4513"/>
+  
+  <!-- Simple eyes -->
+  <circle cx="14" cy="11" r="1" fill="#4169E1"/>
+  <circle cx="18" cy="11" r="1" fill="#4169E1"/>
+  
+  <!-- Simple body -->
+  <rect x="13" y="17" width="6" height="8" rx="3" fill="#FDBCB4"/>
+  
+  <!-- Simple dress -->
+  <path d="M11 22 L11 28 Q16 29 21 28 L21 22 Q16 23 11 22Z" fill="#FF69B4"/>
+  
+  <!-- Status dot -->
+  <circle cx="26" cy="26" r="2" fill="#00FF00">
+    <animate attributeName="opacity" values="1;0.3;1" dur="2s" repeatCount="indefinite"/>
+  </circle>
+</svg>

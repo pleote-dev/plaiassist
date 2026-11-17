@@ -1,0 +1,162 @@
+{
+  "name": "avatar-assistant-mcp",
+  "version": "1.0.0",
+  "description": "MCP desktop assistant with customizable 3D avatar",
+  "main": "dist/desktop-window.js",
+  "homepage": "https://github.com/avatar-assistant/avatar-assistant",
+  "author": {
+    "name": "Avatar Assistant Team",
+    "email": "support@avatar-assistant.com"
+  },
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"npm run dev:mcp\" \"npm run dev:avatar\" \"npm run dev:config\"",
+    "dev:mcp": "tsx watch src/mcp-server.ts",
+    "dev:avatar": "vite --config vite.config.mts",
+    "dev:config": "vite --config vite.config.config.mts",
+    "dev:app": "concurrently \"npm run dev:mcp\" \"npm run dev:avatar\" \"npm run dev:config\" \"wait-on http://localhost:3001 && electron .\"",
+    "build": "npm run build:mcp && npm run build:main && npm run build:avatar && npm run build:config && npm run build:extension",
+    "build:mcp": "tsc -p tsconfig.mcp.json",
+    "build:avatar": "vite build --config vite.config.mts",
+    "build:config": "vite build --config vite.config.config.mts",
+    "build:electron": "electron-builder",
+    "build:electron:dir": "electron-builder --dir",
+    "build:electron:zip": "electron-builder --publish=never",
+    "build:electron:dmg": "electron-builder --mac",
+    "build:electron:win": "electron-builder --win",
+    "build:electron:linux": "electron-builder --linux",
+    "package": "npm run build && npm run build:electron",
+    "package:dir": "npm run build && npm run build:electron:dir",
+    "package:zip": "npm run build && npm run build:electron:zip",
+    "package:dmg": "npm run build && npm run build:electron:dmg",
+    "package:win": "npm run build && npm run build:electron:win",
+    "package:linux": "npm run build && npm run build:electron:linux",
+    "start": "electron .",
+    "start:dev": "NODE_ENV=development electron .",
+    "clean": "rimraf dist build",
+    "clean:all": "rimraf dist build node_modules",
+    "reinstall": "npm run clean:all && npm install",
+    "test": "echo \"No tests specified\" && exit 0",
+    "build:main": "tsc -p tsconfig.electron.json",
+    "build:extension": "node scripts/build-extension.mjs",
+    "start:companion": "npm run build:mcp && npm run build:main && npm run build:avatar && electron ."
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0",
+    "@types/three": "^0.158.0",
+    "express": "^4.18.2",
+    "robotjs": "^0.6.0",
+    "say": "^0.16.0",
+    "three": "^0.158.0",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.20",
+    "@types/node": "^20.8.0",
+    "@types/ws": "^8.5.8",
+    "concurrently": "^8.2.2",
+    "electron": "^27.3.11",
+    "electron-builder": "^26.8.1",
+    "rimraf": "^5.0.5",
+    "tsx": "^4.1.4",
+    "typescript": "^5.2.2",
+    "vite": "^5.0.0",
+    "wait-on": "^7.2.0"
+  },
+  "build": {
+    "appId": "com.avatarassistant.desktop",
+    "productName": "Avatar Assistant",
+    "directories": {
+      "output": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "!dist/extension/**",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "src/assets",
+        "to": "assets",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ]
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "category": "Office"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "dmg": {},
+    "publish": {
+      "provider": "github",
+      "owner": "avatar-assistant",
+      "repo": "avatar-assistant"
+    }
+  },
+  "keywords": [
+    "mcp",
+    "avatar",
+    "assistant",
+    "3d",
+    "desktop",
+    "electron",
+    "ai"
+  ]
+}

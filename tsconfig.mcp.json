@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/mcp-server.ts", "src/desktop-window.ts", "src/preload.ts"],
+  "exclude": ["src/avatar", "node_modules", "dist"]
+}

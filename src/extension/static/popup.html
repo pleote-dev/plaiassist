@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="pt">
+<head>
+<meta charset="utf-8" />
+<style>
+  body { margin: 0; width: 280px; font: 13px -apple-system, system-ui, sans-serif; background: #0c0c10; color: #fff3d6; }
+  header { padding: 12px 14px; border-bottom: 1px solid rgba(233,196,106,.35); display: flex; align-items: center; gap: 8px; }
+  header b { color: #f2cf7a; letter-spacing: .3px; }
+  #dot { width: 8px; height: 8px; border-radius: 50%; background: #777; }
+  #dot.on { background: #4ade80; box-shadow: 0 0 6px #4ade80; }
+  main { padding: 10px 14px 14px; display: grid; gap: 10px; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  select, input[type=text] { background: #18161d; color: #fff3d6; border: 1px solid rgba(233,196,106,.45); border-radius: 8px; padding: 5px 7px; font: inherit; }
+  input[type=text] { width: 100%; box-sizing: border-box; }
+  input[type=range] { width: 120px; accent-color: #d9b35e; }
+  input[type=checkbox] { accent-color: #d9b35e; width: 16px; height: 16px; }
+  small { color: #b9a77d; }
+  button { background: #d9b35e; color: #111; border: 0; border-radius: 8px; padding: 6px 10px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+  <header><span id="dot"></span><b>PLAssist · Hermes</b></header>
+  <main>
+    <label>Mostrar avatar <input type="checkbox" id="enabled" /></label>
+    <label>Nesta página <input type="checkbox" id="here" /></label>
+    <label>Comportamento
+      <select id="mode">
+        <option value="follow">Seguir o cursor</option>
+        <option value="roam">Passear</option>
+        <option value="stay">Ficar quieta</option>
+      </select>
+    </label>
+    <label>Evitar tapar texto <input type="checkbox" id="avoidText" /></label>
+    <label>Tamanho <input type="range" id="size" min="180" max="520" step="10" /></label>
+    <label>Esconder com a app desktop <input type="checkbox" id="hideWhenDesktop" /></label>
+    <div>
+      <small>Servidor MCP do Hermes (WebSocket)</small>
+      <input type="text" id="wsUrl" placeholder="ws://192.168.1.50:8080" />
+      <small id="status"></small>
+    </div>
+    <button id="save">Guardar ligação</button>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

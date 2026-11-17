@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "PLAssist – Hermes Avatar",
+  "version": "1.2.0",
+  "description": "Hermes 3D avatar (noir-gold) walking over any web page: stays near your cursor, looks at it and never covers the text you are working on. Controlled by Hermes via MCP.",
+  "icons": { "48": "icon.png", "128": "icon.png" },
+  "action": { "default_title": "PLAssist Avatar", "default_popup": "popup.html", "default_icon": "icon.png" },
+  "background": { "service_worker": "background.js" },
+  "permissions": ["storage", "tabs", "alarms"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["avatar/*", "avatar/assets/*"], "matches": ["<all_urls>"] }
+  ]
+}
