@@ -1,160 +1,135 @@
-# Avatar Assistant MCP
+# Hermes 3D Avatar Assistant (`plaiassist`)
 
-A desktop assistant with a customizable 3D avatar girl that can interface with the desktop and user through voice and visual interactions.
+An interactive, anatomically articulated 3D desktop & browser companion built with **Three.js**, **Electron**, **TypeScript**, and the **Model Context Protocol (MCP)** so AI agents like **Hermes** can express emotions, body language, gaze, and lip-synced speech in real time.
 
-o avater deve interagir com outras aplicações. A avatar tem de correr em background como um serviço e tendo interface com o utilizador apenas com a avatar onde o utilizador interage e terá acesso a um menu que abre as configurações.
+---
 
 ## Features
 
-- **3D Avatar**: Small, customizable 3D girl avatar using Three.js
-- **Always on Top**: Stays above other windows
-- **Screen Pointing**: Can point to any location on the screen
-- **Voice Interaction**: Voice input/output capabilities
-- **Customizable Appearance**: Modify hair color, eye color, skin tone, and outfits
-- **MCP Integration**: Full Model Context Protocol server integration
-- **Desktop Control**: Mouse simulation and screen interaction
+- **Anatomical 3D Rig (`src/avatar/rigged-avatar.ts`)**: Hierarchical skeletal rig (`hips`, `spine`, `chest`, `neck`, `head`, shoulders, elbows, wrists/hands, hips, knees) with human anatomical joint limits, natural breathing, blinking, gaze tracking, facial expressions, and lip-sync.
+- **Desktop Companion Mode (`src/companion/`)**: Transparent, non-focusable, click-through Electron overlay that walks along window edges and text lines, avoids covering text you're reading, follows your cursor, and supports drag & drop.
+- **Chrome / Edge / Brave Extension (`src/extension/`)**: Renders the companion directly inside web pages, using page elements and text lines as platforms, synced via WebSocket.
+- **Hermes MCP Server (`src/mcp-server.ts`)**:
+  - Runs over `stdio` for Hermes/MCP clients.
+  - Exposes a **WebSocket server** (`:8080`) for real-time avatar control and an **Express HTTP viewer** (`:3000`) for headless/VM setups.
+  - Safely degrades on headless Linux VMs (no X11/`robotjs` required).
+- **Custom 3D Model Support**: Load external `.glb`/`.gltf` models via `load_avatar_model`.
 
-## Installation
+---
+
+## Project Structure
+
+```text
+plaiassist/
+├── src/
+│   ├── avatar/           # Three.js 3D rigged avatar, facial animation & renderer
+│   ├── companion/        # Locomotion physics engine & desktop screen analysis
+│   ├── extension/        # Manifest V3 Chrome extension (background, content, popup)
+│   ├── config/           # Desktop settings UI
+│   ├── desktop-window.ts # Electron main process & tray integration
+│   └── mcp-server.ts     # MCP + WebSocket + HTTP server for Hermes
+├── hermes/
+│   ├── SKILL.md          # Hermes skill instructions for conversational avatar use
+│   └── install-hermes.sh # Headless VM installer for Hermes
+├── scripts/
+│   └── build-extension.mjs
+└── vite.config.mts       # Avatar & config Vite build configs
+```
+
+---
+
+## Quick Start
+
+### 1. Install & Build
 
 ```bash
 npm install
+npm run build
 ```
+
+### 2. Run the Desktop Companion (macOS / Windows / Linux)
+
+```bash
+npm run start:companion
+```
+
+On first launch, `~/.plaiassist/config.json` is created:
+
+```json
+{
+  "wsUrl": "ws://<HERMES_VM_IP>:8080",
+  "startLocalServer": false,
+  "companion": {
+    "enabled": true,
+    "mode": "follow",
+    "avoidText": true,
+    "followDistance": 0.75,
+    "height": 340,
+    "captureIntervalMs": 1500
+  }
+}
+```
+
+- Leave `"wsUrl": ""` and `"startLocalServer": true` to use the built-in local server (`ws://localhost:8080`).
+- Set `"wsUrl": "ws://<HERMES_VM_IP>:8080"` and `"startLocalServer": false` to connect to a remote Hermes VM.
+- **macOS Screen Recording**: Grant permission in **System Settings › Privacy & Security › Screen Recording** (for `Electron` / Terminal) so the companion can detect window edges and text lines. Without it, she stays at the bottom of the screen.
+
+### 3. Browser Extension (Chrome / Edge / Brave)
+
+```bash
+npm run build:extension
+```
+
+1. Open `chrome://extensions` and enable **Developer mode**.
+2. Click **Load unpacked** and select `dist/extension`.
+3. Open the extension popup, set the WebSocket URL (e.g. `ws://<HERMES_VM_IP>:8080`), and click **Save**.
+
+### 4. Deploy to a Hermes VM (Headless Linux)
+
+Copy the compiled bundle to your Hermes VM and run the installer:
+
+```bash
+scp -r dist package.json hermes hermes@<VM_IP>:~/plaiassist-bundle
+ssh hermes@<VM_IP> "cd ~/plaiassist-bundle && ./hermes/install-hermes.sh"
+```
+
+Add the printed `mcp_servers` entry to `~/.hermes/config.yaml`:
+
+```yaml
+mcp_servers:
+  avatar-assistant:
+    command: "node"
+    args:
+      - "/home/hermes/avatar-assistant/dist/mcp-server.js"
+    env:
+      AVATAR_HTTP_PORT: "3000"
+      AVATAR_WS_PORT: "8080"
+```
+
+Open `http://<VM_IP>:3000/` in any browser to view the live 3D avatar.
+
+---
+
+## MCP Tools Reference
+
+| Category | Tools |
+| --- | --- |
+| **Expression & Face** | `express`, `set_facial_expression`, `say`, `lip_sync`, `voice_output` |
+| **Body & Anatomy** | `set_avatar_pose`, `set_joint_angles`, `set_hand_gesture`, `look_at`, `point_at_screen` |
+| **Companion Locomotion** | `companion_mode`, `walk_to`, `jump`, `teleport`, `show_avatar`, `get_companion_state` |
+| **Customization & Status** | `customize_avatar`, `load_avatar_model`, `get_avatar_status`, `move_avatar` |
+| **Desktop Utilities** | `get_screen_info`, `simulate_click`, `voice_input` |
+
+---
 
 ## Development
 
 ```bash
-# Start development servers (MCP server + Avatar window)
-npm run dev
-
-# Build for production
-npm run build
-
-# Start production build
-npm start
+npm run dev          # Watch MCP server + Avatar + Config Vite dev servers
+npm run build        # Build MCP, Electron main, Avatar, Config, and Extension
+npx tsc --noEmit     # Typecheck all TypeScript sources
 ```
-
-## Architecture
-
-### Components
-
-1. **MCP Server** (`src/mcp-server.ts`)
-   - Handles MCP protocol communication
-   - Provides tools for avatar control and desktop interaction
-   - Manages voice input/output and screen operations
-
-2. **3D Avatar** (`src/avatar/main.ts`)
-   - Three.js-based 3D rendering
-   - Real-time pose and appearance updates
-   - Smooth animations and interactions
-
-3. **Desktop Window** (`src/desktop-window.ts`)
-   - Electron-based transparent window
-   - Always-on-top behavior
-   - Click-through functionality
-
-4. **Preload Script** (`src/preload.ts`)
-   - Secure bridge between main and renderer processes
-   - Exposes safe APIs for avatar control
-
-## MCP Tools
-
-The server provides the following tools:
-
-- `move_avatar` - Move avatar to specific screen position
-- `set_avatar_pose` - Change avatar pose (idle, pointing, waving, thinking, happy)
-- `customize_avatar` - Customize appearance (hair color, eye color, skin tone, outfit)
-- `point_at_screen` - Make avatar point at screen coordinates
-- `get_screen_info` - Get screen dimensions and display info
-- `voice_input` - Capture voice input from user
-- `voice_output` - Speak text using voice synthesis
-- `simulate_click` - Simulate mouse clicks at positions
-
-## Avatar Customization
-
-### Appearance Options
-- **Hair Color**: Hex color code
-- **Eye Color**: Hex color code  
-- **Skin Tone**: Hex color code
-- **Outfit**: casual, formal, sporty
-
-### Poses
-- **idle**: Default standing pose with gentle rotation
-- **pointing**: Arm extended to point at target
-- **waving**: Arm raised in greeting
-- **thinking**: Hand to chin pose
-- **happy**: Arms raised in cheerful pose
-
-## Usage
-
-1. Start the application with `npm run dev`
-2. The avatar appears as a small floating window
-3. Connect via MCP client to control the avatar
-4. Use MCP tools to move, pose, and customize the avatar
-5. Avatar can point at screen elements and interact with desktop
-
-## Voice Features
-
-- **Voice Input**: Capture user voice commands
-- **Voice Output**: Text-to-speech synthesis
-- **Platform Support**: Uses system TTS (say on macOS, SAPI on Windows)
-
-## Technical Details
-
-- **Framework**: Electron + Three.js + TypeScript
-- **Protocol**: Model Context Protocol (MCP)
-- **Rendering**: WebGL with transparent background
-- **Animation**: RequestAnimationFrame-based smooth motion
-- **Communication**: IPC + WebSocket for real-time updates
 
 ## License
 
 MIT
-
-
-## Companion mode (desktop & browser) — v1.2
-
-The avatar lives on top of whatever you are doing, with a transparent background:
-
-- **Walks on the screen**: window edges, straight lines, text lines and the bottom of the screen are platforms.
-  She walks/runs along them, jumps up, climbs, hops or climbs down to other surfaces and falls if a window moves away.
-- **Stays close but out of the way**: follows the mouse (and the text caret in the browser), looks at it, and picks
-  a spot that does not cover the text you are working on (configurable `avoidText`).
-- **Never steals focus**: the desktop window is non-focusable and click-through except over her body.
-  Drag her with the mouse (she dangles and falls when released). Right-click: menu (follow / roam / stay, size, …).
-
-### Desktop app
-
-```bash
-npm install
-npm run start:companion        # builds main + MCP server + avatar and launches Electron
-```
-
-Runtime config in `~/.plaiassist/config.json` (created on first run):
-
-```json
-{
-  "wsUrl": "ws://192.168.1.50:8080",   // MCP server used by Hermes (empty = local server)
-  "startLocalServer": true,
-  "companion": { "enabled": true, "mode": "follow", "avoidText": true, "height": 340, "captureIntervalMs": 1500 }
-}
-```
-
-macOS: to walk on windows and text she needs **System Settings › Privacy & Security › Screen Recording** permission
-for the app (without it she stays on the bottom of the screen). Her own window is excluded from the capture.
-`AVATAR_COMPANION=0` restores the old static window.
-
-### Browser extension (Chrome / Edge / Brave)
-
-```bash
-npm run build:extension         # → dist/extension
-```
-
-Open `chrome://extensions`, enable *Developer mode*, *Load unpacked* → `dist/extension`.
-In the extension popup set the Hermes server (`ws://<VM_IP>:8080`, or `wss://…` behind a reverse proxy).
-The overlay uses the page's boxes, rules and text lines as platforms, rides along when you scroll, and hides
-automatically while the desktop app is showing her (option).
-
-### New MCP tools
-
-`companion_mode`, `walk_to`, `jump`, `teleport`, `look_at`, `set_hand_gesture`, `say`, `lip_sync`, `show_avatar`,
-`get_companion_state` — see `hermes/SKILL.md`.
